@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
+import { notifyMany } from "../../../components/util";
 
 const THRESHOLD=100000;
 export default function NewRequest(){
@@ -35,6 +36,8 @@ export default function NewRequest(){
       });
     }
     await supabase.from("hub_activity_log").insert({request_id:req.id,actor_id:uid,action:"created",to_status:"new"});
+    const { data:leads }=await supabase.from("hub_team").select("user_id").eq("hub_role","lead");
+    notifyMany((leads||[]).map(l=>l.user_id),"มีคำขอใหม่เข้ามา",(req.ticket_no||"")+" · "+form.title,"/requests/"+req.id,req.id);
     router.replace("/requests/"+req.id);
   }
   return (<Shell title="เปิดคำขอใหม่">
