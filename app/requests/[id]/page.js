@@ -10,6 +10,7 @@ export default function RequestDetail(){
   const [r,setR]=useState(null); const [exp,setExp]=useState([]); const [log,setLog]=useState([]);
   const [team,setTeam]=useState([]); const [uid,setUid]=useState(null); const [staff,setStaff]=useState(false); const [isLead,setIsLead]=useState(false);
   const [assignee,setAssignee]=useState(""); const [msg,setMsg]=useState(null);
+  const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
   const load=useCallback(async()=>{
     const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours),requester:requester_id(full_name),assignee:assignee_id(full_name)").eq("id",id).single();
     setR(req); setAssignee(req?.assignee_id||"");
@@ -56,8 +57,14 @@ export default function RequestDetail(){
     await act("reject",{status:"in_progress",rework_count:(r.rework_count||0)+1,review_note:note},"ตีกลับแก้ไข: "+note);
     notify(r.assignee_id,"งานถูกตีกลับให้แก้ไข",tk+" · "+(note||""),link,id);
   }
+  async function submitCsat(){
+    if(!cs) return;
+    await supabase.from("hub_requests").update({csat_rating:cs,csat_comment:cc||null,csat_at:new Date().toISOString()}).eq("id",id);
+    setMsg("ขอบคุณสำหรับการประเมิน"); load();
+  }
   const now=new Date();
   const active=["assigned","in_progress","waiting"].includes(r.status);
+  const canRate = r.status==="closed" && uid===r.requester_id;
   return (<Shell title={"คำขอ "+(r.ticket_no||"")}>
     {msg&&<div className="ok">{msg}</div>}
     <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:18}}>
@@ -75,6 +82,20 @@ export default function RequestDetail(){
           {r.review_note&&["in_progress","assigned","waiting"].includes(r.status)&&r.rework_count>0&&
             <div style={{marginTop:8,padding:"8px 10px",background:"#FBF1DE",borderRadius:6,fontSize:13,color:"#9A5B00"}}>ตีกลับให้แก้: {r.review_note}</div>}
         </div>
+
+        {canRate&&(<div className="card">
+          <h2>ประเมินความพึงพอใจ (CSAT)</h2>
+          {r.csat_rating?(
+            <div className="muted">ให้คะแนนแล้ว: <span style={{color:"#F5A623",fontSize:18}}>{"★".repeat(r.csat_rating)}{"☆".repeat(5-r.csat_rating)}</span>{r.csat_comment?(" · "+r.csat_comment):""}</div>
+          ):(<>
+            <div style={{fontSize:30,letterSpacing:6,userSelect:"none"}}>
+              {[1,2,3,4,5].map(n=>(<span key={n} onClick={()=>setCs(n)} style={{cursor:"pointer",color:n<=cs?"#F5A623":"#D0D6DC"}}>★</span>))}
+            </div>
+            <textarea placeholder="ความคิดเห็นเพิ่มเติม (ถ้ามี)" value={cc} onChange={e=>setCc(e.target.value)} style={{marginTop:8}}/>
+            <button className="btn sm" disabled={!cs} onClick={submitCsat} style={{marginTop:6}}>ส่งคะแนน</button>
+          </>)}
+        </div>)}
+
         {exp.length>0&&(<div className="card"><h2>ค่าใช้จ่ายโครงการ</h2>
           <table><thead><tr><th>โครงการ</th><th>Cost Code</th><th className="right">จำนวนเงิน</th><th>อนุมัติ</th><th></th></tr></thead>
           <tbody>{exp.map(x=>(<tr key={x.id}>
