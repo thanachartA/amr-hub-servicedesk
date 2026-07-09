@@ -6,7 +6,8 @@ import { fmtDate } from "./util";
 
 export default function Shell({ children, title }) {
   const router = useRouter(); const path = usePathname();
-  const [me, setMe] = useState(null); const [uid,setUid]=useState(null); const [isLead,setIsLead]=useState(false); const [ready, setReady] = useState(false);
+  const [me, setMe] = useState(null); const [uid,setUid]=useState(null);
+  const [isLead,setIsLead]=useState(false); const [isStaff,setIsStaff]=useState(false); const [ready, setReady] = useState(false);
   const [notifs,setNotifs]=useState([]); const [open,setOpen]=useState(false);
 
   async function loadNotifs(u){
@@ -20,7 +21,9 @@ export default function Shell({ children, title }) {
       const u = data.session.user.id; setUid(u);
       const { data: p } = await supabase.from("profiles").select("id,full_name,role").eq("id", u).maybeSingle();
       const { data: t } = await supabase.from("hub_team").select("hub_role").eq("user_id", u).maybeSingle();
-      setMe(p || { full_name: data.session.user.email }); setIsLead(t?.hub_role==="lead"); setReady(true);
+      const staff=!!t;
+      if(!staff && typeof window!=="undefined" && window.location.pathname==="/"){ router.replace("/requests"); return; }
+      setMe(p || { full_name: data.session.user.email }); setIsLead(t?.hub_role==="lead"); setIsStaff(staff); setReady(true);
       loadNotifs(u);
       timer=setInterval(()=>loadNotifs(u),15000);
     });
@@ -36,8 +39,13 @@ export default function Shell({ children, title }) {
     await supabase.from("hub_notifications").update({is_read:true}).eq("user_id",uid).eq("is_read",false);
     setNotifs(ns=>ns.map(x=>({...x,is_read:true})));
   }
-  const nav = [["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"],["/team","ทีม (Lead)"],["/projects","ต้นทุนโครงการ"],["/reports","รายงานปิดเดือน"]];
-  if (isLead){ nav.push(["/performance","Performance (Lead)"]); nav.push(["/admin","จัดการผู้ใช้ (Admin)"]); }
+  let nav;
+  if(isStaff){
+    nav = [["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"],["/team","ทีม (Lead)"],["/projects","ต้นทุนโครงการ"],["/reports","รายงานปิดเดือน"]];
+    if (isLead){ nav.push(["/performance","Performance (Lead)"]); nav.push(["/admin","จัดการผู้ใช้ (Admin)"]); }
+  } else {
+    nav = [["/requests/new","+ เปิดคำขอใหม่"],["/requests","คำขอของฉัน"]];
+  }
   if (!ready) return <div style={{padding:40,color:"#5A6672"}}>กำลังโหลด…</div>;
   return (
     <div className="layout">
@@ -45,7 +53,7 @@ export default function Shell({ children, title }) {
         <div className="brand">Central Admin Hub<small>Service Desk · AMR Asia</small></div>
         <div className="nav">{nav.map(([h,l])=>(<a key={h} href={h} className={path===h?"active":""}>{l}</a>))}</div>
         <div style={{padding:"14px 20px",marginTop:10,borderTop:"1px solid rgba(255,255,255,.12)",fontSize:12,color:"#9db4c9"}}>
-          {me?.full_name}{isLead?" · Lead":""}<br/>
+          {me?.full_name}{isLead?" · Lead":(isStaff?" · Hub":"")}<br/>
           <a href="#" onClick={async(e)=>{e.preventDefault();await supabase.auth.signOut();router.replace("/login");}} style={{color:"#cde0ee"}}>ออกจากระบบ</a>
         </div>
       </div>
