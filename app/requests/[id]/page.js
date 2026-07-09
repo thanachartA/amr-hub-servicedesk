@@ -3,12 +3,12 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
-import { StatusBadge, fmtDate, fmtMoney } from "../../../components/util";
+import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany } from "../../../components/util";
 
 export default function RequestDetail(){
   const { id }=useParams();
   const [r,setR]=useState(null); const [exp,setExp]=useState([]); const [log,setLog]=useState([]);
-  const [team,setTeam]=useState([]); const [uid,setUid]=useState(null); const [staff,setStaff]=useState(false);
+  const [team,setTeam]=useState([]); const [uid,setUid]=useState(null); const [staff,setStaff]=useState(false); const [isLead,setIsLead]=useState(false);
   const [assignee,setAssignee]=useState(""); const [msg,setMsg]=useState(null);
   const load=useCallback(async()=>{
     const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours),requester:requester_id(full_name),assignee:assignee_id(full_name)").eq("id",id).single();
@@ -22,29 +22,58 @@ export default function RequestDetail(){
     const { data:sess }=await supabase.auth.getSession(); const u=sess.session.user.id; setUid(u);
     const { data:t }=await supabase.from("hub_team").select("hub_role,profiles:user_id(id,full_name)"); setTeam(t||[]);
     setStaff((t||[]).some(x=>x.profiles?.id===u));
+    setIsLead((t||[]).some(x=>x.profiles?.id===u && x.hub_role==="lead"));
     load();
   })(); },[id]);
   if(!r) return <Shell title="คำขอ"><div className="muted">กำลังโหลด…</div></Shell>;
+  const leadIds=team.filter(x=>x.hub_role==="lead").map(x=>x.profiles?.id).filter(Boolean);
+  const link="/requests/"+id;
+  const tk=r.ticket_no||""; const ttl=r.title||"";
   async function act(action,changes,note){
     const from=r.status;
     await supabase.from("hub_requests").update(changes).eq("id",id);
     await supabase.from("hub_activity_log").insert({request_id:id,actor_id:uid,action,from_status:from,to_status:changes.status||from,note:note||null});
     setMsg("อัปเดตแล้ว"); load();
   }
+  async function doAssign(){
+    await act("assign",{assignee_id:assignee,status:"assigned",assigned_at:new Date().toISOString()},"มอบหมายงาน");
+    supabase.from("hub_assignments").insert({request_id:id,assignee_id:assignee,assigned_by:uid,is_current:true});
+    notify(assignee,"ได้รับมอบหมายงานใหม่",tk+" · "+ttl,link,id);
+  }
+  async function doStart(){ const ch={status:"in_progress"}; if(!r.started_at) ch.started_at=new Date().toISOString(); await act("start",ch); }
+  async function doWaiting(){ await act("waiting",{status:"waiting"},"รอข้อมูล"); }
+  async function doSubmit(){
+    await act("submit_review",{status:"review",done_at:new Date().toISOString()},"ส่งตรวจ");
+    notifyMany(leadIds,"มีงานรอตรวจ",tk+" · "+ttl,link,id);
+  }
+  async function doApprove(){
+    await act("approve",{status:"closed",reviewed_by:uid,reviewed_at:new Date().toISOString(),closed_at:new Date().toISOString()},"อนุมัติและปิดงาน");
+    notify(r.requester_id,"งานของคุณเสร็จแล้ว",tk+" · "+ttl,link,id);
+  }
+  async function doReject(){
+    const note=prompt("เหตุผลที่ตีกลับ (ให้ผู้รับผิดชอบแก้ไข):");
+    if(note===null) return;
+    await act("reject",{status:"in_progress",rework_count:(r.rework_count||0)+1,review_note:note},"ตีกลับแก้ไข: "+note);
+    notify(r.assignee_id,"งานถูกตีกลับให้แก้ไข",tk+" · "+(note||""),link,id);
+  }
   const now=new Date();
+  const active=["assigned","in_progress","waiting"].includes(r.status);
   return (<Shell title={"คำขอ "+(r.ticket_no||"")}>
     {msg&&<div className="ok">{msg}</div>}
     <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:18}}>
       <div>
         <div className="card">
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div><span className="mono">{r.ticket_no}</span> &nbsp; <StatusBadge s={r.status}/></div>
+            <div><span className="mono">{r.ticket_no}</span> &nbsp; <StatusBadge s={r.status}/>
+              {r.rework_count>0&&<span className="tag" style={{marginLeft:6,background:"#FBF1DE",color:"#9A5B00"}}>ตีกลับ {r.rework_count} ครั้ง</span>}</div>
             <span className="tag">{r.hub_request_types?.name}</span>
           </div>
           <h2 style={{fontSize:18}}>{r.title}</h2>
           <p className="muted" style={{whiteSpace:"pre-wrap",margin:"8px 0"}}>{r.detail||"—"}</p>
           <div className="muted">ผู้ขอ: {r.requester?.full_name||"—"} · ความเร่งด่วน: {r.priority} · ครบ SLA: {fmtDate(r.sla_due_at)}
-            {r.sla_due_at&&new Date(r.sla_due_at)<now&&!["done","closed","cancelled"].includes(r.status)&&<b style={{color:"#B03A2E"}}> · เกิน SLA</b>}</div>
+            {r.sla_due_at&&new Date(r.sla_due_at)<now&&!["review","closed","cancelled"].includes(r.status)&&<b style={{color:"#B03A2E"}}> · เกิน SLA</b>}</div>
+          {r.review_note&&["in_progress","assigned","waiting"].includes(r.status)&&r.rework_count>0&&
+            <div style={{marginTop:8,padding:"8px 10px",background:"#FBF1DE",borderRadius:6,fontSize:13,color:"#9A5B00"}}>ตีกลับให้แก้: {r.review_note}</div>}
         </div>
         {exp.length>0&&(<div className="card"><h2>ค่าใช้จ่ายโครงการ</h2>
           <table><thead><tr><th>โครงการ</th><th>Cost Code</th><th className="right">จำนวนเงิน</th><th>อนุมัติ</th><th></th></tr></thead>
@@ -70,14 +99,25 @@ export default function RequestDetail(){
               <select value={assignee} onChange={e=>setAssignee(e.target.value)}>
                 <option value="">— เลือกสมาชิก —</option>
                 {team.map(m=>(<option key={m.profiles?.id} value={m.profiles?.id}>{m.profiles?.full_name}{m.hub_role==="lead"?" (Lead)":""}</option>))}</select></div>
-            <button className="btn sm" style={{marginBottom:8,width:"100%"}} disabled={!assignee}
-              onClick={()=>{ act("assign",{assignee_id:assignee,status:"assigned",assigned_at:new Date().toISOString()},"มอบหมายงาน"); supabase.from("hub_assignments").insert({request_id:id,assignee_id:assignee,assigned_by:uid,is_current:true}); }}>มอบหมาย</button>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-              <button className="btn sm sec" onClick={()=>act("start",{status:"in_progress"})}>เริ่มทำ</button>
-              <button className="btn sm sec" onClick={()=>act("waiting",{status:"waiting"},"รอข้อมูล")}>รอข้อมูล</button>
-              <button className="btn sm" onClick={()=>act("done",{status:"done",closed_at:new Date().toISOString()})}>เสร็จ</button>
-              <button className="btn sm sec" onClick={()=>act("close",{status:"closed",closed_at:new Date().toISOString()})}>ปิดงาน</button>
-            </div>
+            <button className="btn sm" style={{marginBottom:10,width:"100%"}} disabled={!assignee} onClick={doAssign}>มอบหมาย</button>
+
+            {active&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+              <button className="btn sm sec" onClick={doStart}>เริ่มทำ</button>
+              <button className="btn sm sec" onClick={doWaiting}>รอข้อมูล</button>
+              <button className="btn sm" style={{gridColumn:"1 / span 2"}} onClick={doSubmit}>ส่งตรวจ ✓</button>
+            </div>}
+
+            {r.status==="review"&&<div style={{marginTop:4}}>
+              {isLead?<>
+                <div className="muted" style={{fontSize:12,marginBottom:8}}>ตรวจความถูกต้องก่อนปิดงาน</div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                  <button className="btn sm" onClick={doApprove}>อนุมัติ/ปิดงาน</button>
+                  <button className="btn sm sec" onClick={doReject}>ตีกลับ</button>
+                </div>
+              </>:<div className="muted" style={{fontSize:13}}>⏳ ส่งตรวจแล้ว — รอหัวหน้าทีมอนุมัติ</div>}
+            </div>}
+
+            {r.status==="closed"&&<div className="muted" style={{fontSize:13}}>✓ ปิดงานแล้ว</div>}
           </>}
         </div>
       </div>
