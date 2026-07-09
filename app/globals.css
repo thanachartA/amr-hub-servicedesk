@@ -27,7 +27,7 @@ tr:hover td{background:var(--card)}
 .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
 .b-new{background:#E7EEF5;color:var(--navy)}.b-assigned{background:#E9F3F4;color:var(--teal)}
 .b-in_progress{background:#FFF4E0;color:var(--amber)}.b-waiting{background:#FBE9E7;color:#B03A2E}
-.b-done{background:#E4F3EA;color:var(--green)}.b-closed{background:#EEE;color:#555}.b-cancelled{background:#F3E0E0;color:#999}
+.b-review{background:#EDE7F6;color:#5E35B1}.b-done{background:#E4F3EA;color:var(--green)}.b-closed{background:#EEE;color:#555}.b-cancelled{background:#F3E0E0;color:#999}
 .field{margin-bottom:14px}.field label{display:block;font-size:12.5px;color:var(--gray);margin-bottom:5px;font-weight:600}
 .field input,.field select,.field textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:13.5px;font-family:inherit;background:#fff}
 .field textarea{min-height:80px;resize:vertical}
