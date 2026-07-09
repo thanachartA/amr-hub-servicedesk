@@ -36,8 +36,8 @@ export default function Shell({ children, title }) {
     await supabase.from("hub_notifications").update({is_read:true}).eq("user_id",uid).eq("is_read",false);
     setNotifs(ns=>ns.map(x=>({...x,is_read:true})));
   }
-  const nav = [["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"],["/team","ทีม (Lead)"],["/projects","ต้นทุนโครงการ"]];
-  if (isLead) nav.push(["/admin","จัดการผู้ใช้ (Admin)"]);
+  const nav = [["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"],["/team","ทีม (Lead)"],["/projects","ต้นทุนโครงการ"],["/reports","รายงานปิดเดือน"]];
+  if (isLead){ nav.push(["/performance","Performance (Lead)"]); nav.push(["/admin","จัดการผู้ใช้ (Admin)"]); }
   if (!ready) return <div style={{padding:40,color:"#5A6672"}}>กำลังโหลด…</div>;
   return (
     <div className="layout">
