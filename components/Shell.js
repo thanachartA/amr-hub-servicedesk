@@ -48,7 +48,7 @@ export default function Shell({ children, title }) {
     nav = [["/","Dashboard"],["/requests","งานของฉัน"],["/requests/new","+ เปิดคำขอ"]];
   } else {
     nav = [["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"]];
-    if(canManage) nav.push(["/team","ทีม (มอบหมาย)"]);
+    if(canViewAll) nav.push(["/team","ทีม (มอบหมาย)"]);
     nav.push(["/projects","ต้นทุนโครงการ"]);
     nav.push(["/reports","รายงานปิดเดือน"]);
     nav.push(["/performance","Performance"]);
