@@ -14,7 +14,7 @@ export default function Performance(){
     const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
     const { data:t }=await supabase.from("hub_team").select("hub_role,profiles:user_id(id,full_name)");
     setTeam(t||[]);
-    const lead=(t||[]).some(x=>x.profiles?.id===uid && x.hub_role==="lead");
+    const lead=(t||[]).some(x=>x.profiles?.id===uid && ["owner","lead","supervisor"].includes(x.hub_role));
     setOk(lead);
     if(!lead) return;
     const { data }=await supabase.from("hub_requests").select("id,status,priority,created_at,assigned_at,started_at,done_at,closed_at,sla_due_at,rework_count,csat_rating,assignee_id,assignee:assignee_id(full_name)").limit(2000);
