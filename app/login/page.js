@@ -8,7 +8,7 @@ const okDomain = e => /@amrasia\.com$/i.test((e||"").trim());
 export default function Login(){
   const router=useRouter();
   const [email,setEmail]=useState(""); const [pw,setPw]=useState("");
-  const [usePw,setUsePw]=useState(false);
+  const [usePw,setUsePw]=useState(true);
   const [msg,setMsg]=useState(null); const [err,setErr]=useState(null); const [busy,setBusy]=useState(false);
   useEffect(()=>{ supabase.auth.getSession().then(({data})=>{ if(data.session) router.replace("/"); }); },[]);
 
@@ -39,7 +39,7 @@ export default function Login(){
         <div className="field"><label>อีเมลบริษัท</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@amrasia.com" autoFocus/></div>
         <button className="btn" style={{width:"100%"}} disabled={busy||!email}>{busy?"กำลังส่ง…":"ส่งลิงก์เข้าสู่ระบบทางอีเมล"}</button>
         <div style={{textAlign:"center",marginTop:12}}>
-          <a href="#" onClick={e=>{e.preventDefault();setErr(null);setMsg(null);setUsePw(true);}} style={{fontSize:13,color:"#E81828"}}>เข้าสู่ระบบด้วยรหัสผ่านแทน</a>
+          <a href="#" onClick={e=>{e.preventDefault();setErr(null);setMsg(null);setUsePw(true);}} style={{fontSize:13,color:"#E81828"}}>← กลับไปเข้าด้วยรหัสผ่าน</a>
         </div>
       </form>
     ) : (
@@ -48,7 +48,7 @@ export default function Login(){
         <div className="field"><label>รหัสผ่าน</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="รหัสผ่าน"/></div>
         <button className="btn" style={{width:"100%"}} disabled={busy||!email||!pw}>{busy?"กำลังเข้า…":"เข้าสู่ระบบ"}</button>
         <div style={{textAlign:"center",marginTop:12}}>
-          <a href="#" onClick={e=>{e.preventDefault();setErr(null);setMsg(null);setUsePw(false);}} style={{fontSize:13,color:"#E81828"}}>← กลับไปเข้าด้วยลิงก์อีเมล</a>
+          <a href="#" onClick={e=>{e.preventDefault();setErr(null);setMsg(null);setUsePw(false);}} style={{fontSize:13,color:"#E81828"}}>ยังไม่มีรหัสผ่าน? รับลิงก์เข้าระบบทางอีเมล</a>
         </div>
       </form>
     )}
