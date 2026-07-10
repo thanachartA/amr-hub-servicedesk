@@ -8,7 +8,7 @@ import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany } from "../../../com
 export default function RequestDetail(){
   const { id }=useParams();
   const [r,setR]=useState(null); const [exp,setExp]=useState([]); const [log,setLog]=useState([]);
-  const [team,setTeam]=useState([]); const [uid,setUid]=useState(null); const [staff,setStaff]=useState(false); const [canManage,setCanManage]=useState(false);
+  const [team,setTeam]=useState([]); const [uid,setUid]=useState(null); const [staff,setStaff]=useState(false); const [canManage,setCanManage]=useState(false); const [canAssign,setCanAssign]=useState(false);
   const [assignee,setAssignee]=useState(""); const [msg,setMsg]=useState(null);
   const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
   const load=useCallback(async()=>{
@@ -24,10 +24,11 @@ export default function RequestDetail(){
     const { data:t }=await supabase.from("hub_team").select("hub_role,profiles:user_id(id,full_name)"); setTeam(t||[]);
     setStaff((t||[]).some(x=>x.profiles?.id===u));
     setCanManage((t||[]).some(x=>x.profiles?.id===u && ["owner","lead"].includes(x.hub_role)));
+    setCanAssign((t||[]).some(x=>x.profiles?.id===u && ["owner","lead","supervisor"].includes(x.hub_role)));
     load();
   })(); },[id]);
   if(!r) return <Shell title="คำขอ"><div className="muted">กำลังโหลด…</div></Shell>;
-  const leadIds=team.filter(x=>["owner","lead"].includes(x.hub_role)).map(x=>x.profiles?.id).filter(Boolean);
+  const leadIds=team.filter(x=>["owner","lead","supervisor"].includes(x.hub_role)).map(x=>x.profiles?.id).filter(Boolean);
   const link="/requests/"+id;
   const tk=r.ticket_no||""; const ttl=r.title||"";
   const isAssignee = uid===r.assignee_id;
@@ -117,7 +118,7 @@ export default function RequestDetail(){
         <div className="card"><h2>การดำเนินการ</h2>
           {!staff&&<div className="muted">เฉพาะทีม Hub เท่านั้นที่จัดการได้</div>}
           {staff&&<>
-            {canManage&&<>
+            {canAssign&&<>
               <div className="field"><label>มอบหมายให้</label>
                 <select value={assignee} onChange={e=>setAssignee(e.target.value)}>
                   <option value="">— เลือกสมาชิก —</option>
@@ -125,14 +126,14 @@ export default function RequestDetail(){
               <button className="btn sm" style={{marginBottom:10,width:"100%"}} disabled={!assignee} onClick={doAssign}>มอบหมาย</button>
             </>}
 
-            {active&&(canManage||isAssignee)&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+            {active&&(canAssign||isAssignee)&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
               <button className="btn sm sec" onClick={doStart}>เริ่มทำ</button>
               <button className="btn sm sec" onClick={doWaiting}>รอข้อมูล</button>
               <button className="btn sm" style={{gridColumn:"1 / span 2"}} onClick={doSubmit}>ส่งตรวจ ✓</button>
             </div>}
 
             {r.status==="review"&&<div style={{marginTop:4}}>
-              {canManage?<>
+              {canAssign?<>
                 <div className="muted" style={{fontSize:12,marginBottom:8}}>ตรวจความถูกต้องก่อนปิดงาน</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
                   <button className="btn sm" onClick={doApprove}>อนุมัติ/ปิดงาน</button>
@@ -142,7 +143,7 @@ export default function RequestDetail(){
             </div>}
 
             {r.status==="closed"&&<div className="muted" style={{fontSize:13}}>✓ ปิดงานแล้ว</div>}
-            {!canManage&&!isAssignee&&active&&<div className="muted" style={{fontSize:13}}>ยังไม่ได้รับมอบหมายงานนี้</div>}
+            {!canAssign&&!isAssignee&&active&&<div className="muted" style={{fontSize:13}}>ยังไม่ได้รับมอบหมายงานนี้</div>}
           </>}
         </div>
       </div>
