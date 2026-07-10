@@ -4,8 +4,8 @@ body{font-family:'Noto Sans Thai','Segoe UI',Tahoma,sans-serif;background:var(--
 a{color:inherit;text-decoration:none}
 .layout{display:flex;min-height:100vh}
 .side{width:222px;background:var(--navy);color:#fff;position:fixed;height:100vh;overflow:auto}
-.brand{background:#fff;padding:14px 16px 12px}
-.brand img{display:block;width:100%;max-width:150px;height:auto}
+.brand{background:#fff;padding:16px 16px 12px}
+.brand img{display:block;width:116px;max-width:72%;height:auto;margin:0 auto}
 .brand small{display:block;font-weight:600;font-size:11px;color:var(--gray);margin-top:6px}
 .nav{padding-top:8px}
 .nav a{display:block;padding:10px 20px;color:#c9cdd4;font-size:13.5px;border-left:3px solid transparent}
@@ -37,7 +37,7 @@ tr:hover td{background:var(--card)}
 .field textarea{min-height:80px;resize:vertical}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .login{max-width:390px;margin:7vh auto;background:#fff;border:1px solid var(--line);border-radius:14px;padding:30px}
-.login img.logo{display:block;width:160px;margin:0 auto 16px}
+.login img.logo{display:block;width:132px;margin:0 auto 18px}
 .login h1{font-size:19px;color:var(--navy);margin-bottom:4px;text-align:center}.login p{color:var(--gray);font-size:13px;margin-bottom:20px;text-align:center}
 .muted{color:var(--gray);font-size:12.5px}.right{text-align:right}.mono{font-family:ui-monospace,monospace;font-size:12px}
 .tag{font-size:11px;padding:2px 8px;border-radius:6px;background:var(--card);border:1px solid var(--line);color:var(--gray)}
