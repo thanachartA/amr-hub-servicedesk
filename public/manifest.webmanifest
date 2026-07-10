@@ -1,12 +1,12 @@
 {
   "name": "AMR Central Admin Hub — Service Desk",
-  "short_name": "Admin Hub",
+  "short_name": "AMR Hub",
   "description": "ระบบ Service Desk ทีม Central Admin Hub — AMR Asia",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#EEF2F5",
-  "theme_color": "#16324F",
+  "background_color": "#F1F3F5",
+  "theme_color": "#202028",
   "lang": "th",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
