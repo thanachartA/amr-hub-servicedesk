@@ -42,7 +42,7 @@ export default function Shell({ children, title }) {
   let nav;
   if(isStaff){
     nav = [["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"],["/team","ทีม (Lead)"],["/projects","ต้นทุนโครงการ"],["/reports","รายงานปิดเดือน"]];
-    if (isLead){ nav.push(["/performance","Performance (Lead)"]); nav.push(["/admin","จัดการผู้ใช้ (Admin)"]); }
+    if (isLead){ nav.push(["/executive","รายงานผู้บริหาร"]); nav.push(["/performance","Performance (Lead)"]); nav.push(["/admin","จัดการผู้ใช้ (Admin)"]); }
   } else {
     nav = [["/requests/new","+ เปิดคำขอใหม่"],["/requests","คำขอของฉัน"]];
   }
