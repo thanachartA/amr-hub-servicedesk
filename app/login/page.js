@@ -28,21 +28,22 @@ export default function Login(){
     }
   }
   return (<div className="login">
+    <img className="logo" src="/amr-logo.png" alt="AMR ASIA"/>
     <h1>Central Admin Hub</h1>
-    <p className="muted">Service Desk · เข้าใช้งานด้วยอีเมลบริษัท (@amrasia.com)</p>
+    <p>Service Desk · เข้าใช้งานด้วยอีเมลบริษัท (@amrasia.com)</p>
     {err&&<div className="err">{err}</div>}{msg&&<div className="ok">{msg}</div>}
     <div className="field"><label>อีเมลบริษัท</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@amrasia.com"/></div>
     <button className="btn" style={{width:"100%"}} disabled={busy||!email} onClick={magic}>✉ รับลิงก์เข้าสู่ระบบ (ไม่ต้องใช้รหัสผ่าน)</button>
     <div className="muted" style={{fontSize:12,margin:"8px 0 2px",textAlign:"center"}}>แนะนำ — ปลอดภัย ไม่ต้องจำรหัสผ่าน</div>
     <div style={{textAlign:"center",margin:"10px 0"}}>
-      <a href="#" onClick={e=>{e.preventDefault();setUsePw(v=>!v);setErr(null);setMsg(null);}} style={{color:"#0E7C86",fontSize:13}}>{usePw?"ซ่อนการใช้รหัสผ่าน":"หรือเข้าด้วยรหัสผ่าน"}</a>
+      <a href="#" onClick={e=>{e.preventDefault();setUsePw(v=>!v);setErr(null);setMsg(null);}} style={{color:"#E81828",fontSize:13}}>{usePw?"ซ่อนการใช้รหัสผ่าน":"หรือเข้าด้วยรหัสผ่าน"}</a>
     </div>
     {usePw&&<form onSubmit={submit}>
       <div className="field"><label>รหัสผ่าน{mode==="signup"?" (อย่างน้อย 6 ตัว)":""}</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} minLength={6} placeholder="••••••••"/></div>
       <button className="btn sec" style={{width:"100%"}} disabled={busy||!pw}>{busy?"…":(mode==="login"?"เข้าสู่ระบบด้วยรหัสผ่าน":"สมัคร + ตั้งรหัสผ่าน")}</button>
       <div style={{textAlign:"center",marginTop:10,fontSize:13}}>
-        {mode==="login"?<a href="#" onClick={e=>{e.preventDefault();setMode("signup");}} style={{color:"#0E7C86"}}>ยังไม่มีบัญชี? สมัคร</a>
-                       :<a href="#" onClick={e=>{e.preventDefault();setMode("login");}} style={{color:"#0E7C86"}}>มีบัญชีแล้ว? เข้าสู่ระบบ</a>}
+        {mode==="login"?<a href="#" onClick={e=>{e.preventDefault();setMode("signup");}} style={{color:"#E81828"}}>ยังไม่มีบัญชี? สมัคร</a>
+                       :<a href="#" onClick={e=>{e.preventDefault();setMode("login");}} style={{color:"#E81828"}}>มีบัญชีแล้ว? เข้าสู่ระบบ</a>}
       </div>
     </form>}
   </div>);
