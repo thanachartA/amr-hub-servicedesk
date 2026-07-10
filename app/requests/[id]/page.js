@@ -23,7 +23,7 @@ export default function RequestDetail(){
     const { data:sess }=await supabase.auth.getSession(); const u=sess.session.user.id; setUid(u);
     const { data:t }=await supabase.from("hub_team").select("hub_role,profiles:user_id(id,full_name)"); setTeam(t||[]);
     setStaff((t||[]).some(x=>x.profiles?.id===u));
-    setCanManage((t||[]).some(x=>x.profiles?.id===u && ["owner","lead"].includes(x.hub_role)));
+    setCanManage((t||[]).some(x=>x.profiles?.id===u && ["owner","supervisor"].includes(x.hub_role)));
     setCanAssign((t||[]).some(x=>x.profiles?.id===u && ["owner","lead","supervisor"].includes(x.hub_role)));
     load();
   })(); },[id]);
