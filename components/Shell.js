@@ -7,7 +7,7 @@ import { fmtDate } from "./util";
 export default function Shell({ children, title }) {
   const router = useRouter(); const path = usePathname();
   const [me, setMe] = useState(null); const [uid,setUid]=useState(null);
-  const [isLead,setIsLead]=useState(false); const [isStaff,setIsStaff]=useState(false); const [ready, setReady] = useState(false);
+  const [role,setRole]=useState(null); const [isStaff,setIsStaff]=useState(false); const [ready, setReady] = useState(false);
   const [notifs,setNotifs]=useState([]); const [open,setOpen]=useState(false);
 
   async function loadNotifs(u){
@@ -23,7 +23,7 @@ export default function Shell({ children, title }) {
       const { data: t } = await supabase.from("hub_team").select("hub_role").eq("user_id", u).maybeSingle();
       const staff=!!t;
       if(!staff && typeof window!=="undefined" && window.location.pathname==="/"){ router.replace("/requests"); return; }
-      setMe(p || { full_name: data.session.user.email }); setIsLead(t?.hub_role==="lead"); setIsStaff(staff); setReady(true);
+      setMe(p || { full_name: data.session.user.email }); setRole(t?.hub_role||null); setIsStaff(staff); setReady(true);
       loadNotifs(u);
       timer=setInterval(()=>loadNotifs(u),15000);
     });
@@ -39,13 +39,23 @@ export default function Shell({ children, title }) {
     await supabase.from("hub_notifications").update({is_read:true}).eq("user_id",uid).eq("is_read",false);
     setNotifs(ns=>ns.map(x=>({...x,is_read:true})));
   }
+  const canManage = role==="owner"||role==="lead";
+  const canViewAll = canManage || role==="supervisor";
   let nav;
-  if(isStaff){
-    nav = [["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"],["/team","ทีม (Lead)"],["/projects","ต้นทุนโครงการ"],["/reports","รายงานปิดเดือน"]];
-    if (isLead){ nav.push(["/executive","รายงานผู้บริหาร"]); nav.push(["/performance","Performance (Lead)"]); nav.push(["/admin","จัดการผู้ใช้ (Admin)"]); }
-  } else {
+  if(!isStaff){
     nav = [["/requests/new","+ เปิดคำขอใหม่"],["/requests","คำขอของฉัน"]];
+  } else if(role==="agent"){
+    nav = [["/","Dashboard"],["/requests","งานของฉัน"],["/requests/new","+ เปิดคำขอ"]];
+  } else {
+    nav = [["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"]];
+    if(canManage) nav.push(["/team","ทีม (มอบหมาย)"]);
+    nav.push(["/projects","ต้นทุนโครงการ"]);
+    nav.push(["/reports","รายงานปิดเดือน"]);
+    nav.push(["/performance","Performance"]);
+    nav.push(["/executive","รายงานผู้บริหาร"]);
+    if(canManage) nav.push(["/admin","จัดการผู้ใช้ (Admin)"]);
   }
+  const roleLabel = role==="owner"?" · Owner":role==="lead"?" · Lead":role==="supervisor"?" · Supervisor":isStaff?" · Hub":"";
   if (!ready) return <div style={{padding:40,color:"#5A6672"}}>กำลังโหลด…</div>;
   return (
     <div className="layout">
@@ -53,7 +63,7 @@ export default function Shell({ children, title }) {
         <div className="brand"><img src="/amr-logo.png" alt="AMR ASIA"/><small>Central Admin Hub · Service Desk</small></div>
         <div className="nav">{nav.map(([h,l])=>(<a key={h} href={h} className={path===h?"active":""}>{l}</a>))}</div>
         <div style={{padding:"14px 20px",marginTop:10,borderTop:"1px solid rgba(255,255,255,.12)",fontSize:12,color:"#a7abb3"}}>
-          {me?.full_name}{isLead?" · Lead":(isStaff?" · Hub":"")}<br/>
+          {me?.full_name}{roleLabel}<br/>
           <a href="#" onClick={async(e)=>{e.preventDefault();await supabase.auth.signOut();router.replace("/login");}} style={{color:"#e6e7ea"}}>ออกจากระบบ</a>
         </div>
       </div>
