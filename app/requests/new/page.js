@@ -6,6 +6,15 @@ import { supabase } from "../../../lib/supabaseClient";
 import { notifyMany } from "../../../components/util";
 
 const THRESHOLD=100000;
+const CAT={ finance:{label:"💰 การเงิน & เบิกจ่าย",order:1}, procurement:{label:"🛒 จัดซื้อ & Vendor",order:2}, ga:{label:"🏢 ธุรการ & ยานพาหนะ",order:3} };
+const CAT_OTHER={label:"อื่น ๆ",order:9};
+function groupTypes(types){
+  const g={};
+  types.forEach(t=>{ const k=CAT[t.category]?t.category:"_other"; (g[k]=g[k]||[]).push(t); });
+  return Object.entries(g)
+    .map(([k,items])=>({ key:k, meta:CAT[k]||CAT_OTHER, items:items.sort((a,b)=>(a.sort_order||100)-(b.sort_order||100)) }))
+    .sort((a,b)=>a.meta.order-b.meta.order);
+}
 export default function NewRequest(){
   const router=useRouter();
   const [types,setTypes]=useState([]); const [projects,setProjects]=useState([]); const [codes,setCodes]=useState([]);
@@ -13,7 +22,7 @@ export default function NewRequest(){
   const [err,setErr]=useState(null); const [busy,setBusy]=useState(false);
   useEffect(()=>{ (async()=>{
     const [t,p,c]=await Promise.all([
-      supabase.from("hub_request_types").select("*").eq("is_active",true).order("name"),
+      supabase.from("hub_request_types").select("*").eq("is_active",true).order("sort_order"),
       supabase.from("projects").select("id,code,name,budget_amount").order("code").limit(500),
       supabase.from("hub_cost_codes").select("*").eq("is_active",true).order("code")]);
     setTypes(t.data||[]); setProjects(p.data||[]); setCodes(c.data||[]);
@@ -46,7 +55,12 @@ export default function NewRequest(){
       <form onSubmit={submit}>
         <div className="field"><label>ประเภทงาน *</label>
           <select value={form.type} onChange={e=>up("type",e.target.value)} required>
-            <option value="">— เลือก —</option>{types.map(t=>(<option key={t.id} value={t.id}>{t.name}{t.incurs_expense?" (มีค่าใช้จ่าย)":""}</option>))}
+            <option value="">— เลือกหมวด / ประเภทงาน —</option>
+            {groupTypes(types).map(g=>(
+              <optgroup key={g.key} label={g.meta.label}>
+                {g.items.map(t=>(<option key={t.id} value={t.id}>{t.name}{t.incurs_expense?" (มีค่าใช้จ่าย)":""}</option>))}
+              </optgroup>
+            ))}
           </select></div>
         <div className="field"><label>หัวข้อ *</label><input value={form.title} onChange={e=>up("title",e.target.value)} required/></div>
         <div className="field"><label>รายละเอียด</label><textarea value={form.detail} onChange={e=>up("detail",e.target.value)}/></div>
