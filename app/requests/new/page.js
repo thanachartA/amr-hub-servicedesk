@@ -45,7 +45,7 @@ export default function NewRequest(){
       });
     }
     await supabase.from("hub_activity_log").insert({request_id:req.id,actor_id:uid,action:"created",to_status:"new"});
-    const { data:leads }=await supabase.from("hub_team").select("user_id").eq("hub_role","lead");
+    const { data:leads }=await supabase.from("hub_team").select("user_id").in("hub_role",["owner","lead","supervisor"]);
     notifyMany((leads||[]).map(l=>l.user_id),"มีคำขอใหม่เข้ามา",(req.ticket_no||"")+" · "+form.title,"/requests/"+req.id,req.id);
     router.replace("/requests/"+req.id);
   }
