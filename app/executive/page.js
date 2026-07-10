@@ -14,7 +14,7 @@ export default function Executive(){
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
     const { data:t }=await supabase.from("hub_team").select("hub_role,profiles:user_id(id,full_name)"); setTeam(t||[]);
-    const lead=(t||[]).some(x=>x.profiles?.id===uid&&x.hub_role==="lead"); setOk(lead);
+    const lead=(t||[]).some(x=>x.profiles?.id===uid&&["owner","lead","supervisor"].includes(x.hub_role)); setOk(lead);
     if(!lead) return;
     const { data:r }=await supabase.from("hub_requests").select("id,status,created_at,closed_at,assigned_at,sla_due_at,csat_rating,rework_count,assignee_id,hub_request_types(name),assignee:assignee_id(full_name)").limit(3000);
     setList(r||[]);
