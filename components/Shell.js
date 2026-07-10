@@ -39,8 +39,8 @@ export default function Shell({ children, title }) {
     await supabase.from("hub_notifications").update({is_read:true}).eq("user_id",uid).eq("is_read",false);
     setNotifs(ns=>ns.map(x=>({...x,is_read:true})));
   }
-  const canManage = role==="owner"||role==="lead";
-  const canViewAll = canManage || role==="supervisor";
+  const canManage = role==="owner"||role==="supervisor";
+  const canViewAll = canManage || role==="lead";
   let nav;
   if(!isStaff){
     nav = [["/requests/new","+ เปิดคำขอใหม่"],["/requests","คำขอของฉัน"]];
