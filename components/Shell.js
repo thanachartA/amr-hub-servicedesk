@@ -50,11 +50,11 @@ export default function Shell({ children, title }) {
   return (
     <div className="layout">
       <div className="side">
-        <div className="brand">Central Admin Hub<small>Service Desk · AMR Asia</small></div>
+        <div className="brand"><img src="/amr-logo.png" alt="AMR ASIA"/><small>Central Admin Hub · Service Desk</small></div>
         <div className="nav">{nav.map(([h,l])=>(<a key={h} href={h} className={path===h?"active":""}>{l}</a>))}</div>
-        <div style={{padding:"14px 20px",marginTop:10,borderTop:"1px solid rgba(255,255,255,.12)",fontSize:12,color:"#9db4c9"}}>
+        <div style={{padding:"14px 20px",marginTop:10,borderTop:"1px solid rgba(255,255,255,.12)",fontSize:12,color:"#a7abb3"}}>
           {me?.full_name}{isLead?" · Lead":(isStaff?" · Hub":"")}<br/>
-          <a href="#" onClick={async(e)=>{e.preventDefault();await supabase.auth.signOut();router.replace("/login");}} style={{color:"#cde0ee"}}>ออกจากระบบ</a>
+          <a href="#" onClick={async(e)=>{e.preventDefault();await supabase.auth.signOut();router.replace("/login");}} style={{color:"#e6e7ea"}}>ออกจากระบบ</a>
         </div>
       </div>
       <div className="main">
@@ -62,17 +62,17 @@ export default function Shell({ children, title }) {
           <h1>{title}</h1>
           <div style={{position:"relative"}}>
             <button onClick={()=>setOpen(o=>!o)} style={{position:"relative",background:"#fff",border:"1px solid #DDE3E8",borderRadius:8,padding:"7px 11px",cursor:"pointer",fontSize:16}} aria-label="แจ้งเตือน">🔔
-              {unread>0&&<span style={{position:"absolute",top:-6,right:-6,background:"#B03A2E",color:"#fff",borderRadius:10,fontSize:11,minWidth:18,height:18,lineHeight:"18px",padding:"0 4px",fontWeight:700}}>{unread}</span>}
+              {unread>0&&<span style={{position:"absolute",top:-6,right:-6,background:"#E81828",color:"#fff",borderRadius:10,fontSize:11,minWidth:18,height:18,lineHeight:"18px",padding:"0 4px",fontWeight:700}}>{unread}</span>}
             </button>
             {open&&<div style={{position:"absolute",right:0,top:44,width:340,background:"#fff",border:"1px solid #DDE3E8",borderRadius:10,boxShadow:"0 8px 28px rgba(0,0,0,.12)",zIndex:50,overflow:"hidden"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderBottom:"1px solid #EEF1F3"}}>
                 <b style={{fontSize:13}}>การแจ้งเตือน</b>
-                {unread>0&&<a href="#" onClick={e=>{e.preventDefault();markAll();}} style={{fontSize:12,color:"#0E7C86"}}>อ่านทั้งหมด</a>}
+                {unread>0&&<a href="#" onClick={e=>{e.preventDefault();markAll();}} style={{fontSize:12,color:"#E81828"}}>อ่านทั้งหมด</a>}
               </div>
               <div style={{maxHeight:380,overflowY:"auto"}}>
                 {notifs.length===0&&<div style={{padding:"18px 14px",color:"#5A6672",fontSize:13}}>ยังไม่มีการแจ้งเตือน</div>}
-                {notifs.map(n=>(<div key={n.id} onClick={()=>openNotif(n)} style={{padding:"10px 14px",borderBottom:"1px solid #F2F4F6",cursor:"pointer",background:n.is_read?"#fff":"#EFF7F8"}}>
-                  <div style={{fontSize:13,fontWeight:n.is_read?400:700,color:"#16324F"}}>{n.title}</div>
+                {notifs.map(n=>(<div key={n.id} onClick={()=>openNotif(n)} style={{padding:"10px 14px",borderBottom:"1px solid #F2F4F6",cursor:"pointer",background:n.is_read?"#fff":"#FDECEE"}}>
+                  <div style={{fontSize:13,fontWeight:n.is_read?400:700,color:"#202028"}}>{n.title}</div>
                   {n.body&&<div style={{fontSize:12,color:"#5A6672",marginTop:2}}>{n.body}</div>}
                   <div style={{fontSize:11,color:"#98A4AE",marginTop:3}}>{fmtDate(n.created_at)}</div>
                 </div>))}
