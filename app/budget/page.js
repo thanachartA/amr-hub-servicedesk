@@ -16,6 +16,7 @@ const ALIAS={
   description:["description","desc","รายละเอียด","detail","narration"],
   vendor:["vendor","supplier","ผู้ขาย","คู่ค้า"],
 };
+const MONTH_TH=["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
 function mapHeader(head){
   const norm=head.map(h=>String(h||"").trim().toLowerCase().replace(/\s+/g,"_"));
   const idx={};
@@ -32,12 +33,56 @@ function toPeriod(v, fallbackDate){
   if(fallbackDate) return String(fallbackDate).slice(0,7);
   return null;
 }
+const pctColor=p=>p>100?"#B03A2E":p>85?"#B26A00":"#2E7D5B";
+
+/* ---------- กราฟ Burn Rate (SVG ล้วน ไม่พึ่ง library) ---------- */
+function BurnChart({ months }){
+  const W=980, H=300, PL=76, PR=20, PT=16, PB=46;
+  const iw=W-PL-PR, ih=H-PT-PB;
+  const maxBar=Math.max(1,...months.map(m=>Math.max(m.budget,m.actual)));
+  const maxCum=Math.max(1,...months.map(m=>Math.max(m.cumB,m.cumA)));
+  const bw=iw/months.length;
+  const y=(v,max)=>PT+ih-(v/max)*ih;
+  const cx=i=>PL+bw*i+bw/2;
+  const line=(key)=>months.map((m,i)=>(i?"L":"M")+cx(i)+","+y(m[key],maxCum)).join(" ");
+  const ticks=[0,.25,.5,.75,1];
+  const short=v=>v>=1e6?(v/1e6).toFixed(1)+"M":v>=1e3?Math.round(v/1e3)+"K":String(Math.round(v));
+  return (
+    <div style={{overflowX:"auto"}}>
+      <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",minWidth:640,height:"auto"}}>
+        {ticks.map((t,i)=>(<g key={i}>
+          <line x1={PL} x2={W-PR} y1={PT+ih-t*ih} y2={PT+ih-t*ih} stroke="#EEF1F3"/>
+          <text x={PL-8} y={PT+ih-t*ih+4} textAnchor="end" fontSize="10" fill="#98A4AE">{short(maxBar*t)}</text>
+        </g>))}
+        {months.map((m,i)=>{
+          const over=m.budget>0 && m.actual>m.budget;
+          return (<g key={i}>
+            <rect x={cx(i)-bw*0.32} y={y(m.budget,maxBar)} width={bw*0.28}
+              height={Math.max(0,PT+ih-y(m.budget,maxBar))} fill="#D6DCE2" rx="2"/>
+            <rect x={cx(i)+bw*0.04} y={y(m.actual,maxBar)} width={bw*0.28}
+              height={Math.max(0,PT+ih-y(m.actual,maxBar))} fill={over?"#B03A2E":"#E81828"} rx="2"/>
+            <text x={cx(i)} y={H-26} textAnchor="middle" fontSize="10.5" fill="#5A6672">{m.label}</text>
+          </g>);
+        })}
+        <path d={line("cumB")} fill="none" stroke="#98A4AE" strokeWidth="1.8" strokeDasharray="5 4"/>
+        <path d={line("cumA")} fill="none" stroke="#202028" strokeWidth="2"/>
+        {months.map((m,i)=>(<circle key={i} cx={cx(i)} cy={y(m.cumA,maxCum)} r="2.8" fill="#202028"/>))}
+        <g transform={"translate("+PL+","+(H-8)+")"} fontSize="10.5" fill="#5A6672">
+          <rect x="0" y="-8" width="10" height="8" fill="#D6DCE2" rx="1"/><text x="14" y="0">งบ/เดือน</text>
+          <rect x="72" y="-8" width="10" height="8" fill="#E81828" rx="1"/><text x="86" y="0">ใช้จริง/เดือน</text>
+          <line x1="160" y1="-4" x2="180" y2="-4" stroke="#98A4AE" strokeWidth="1.8" strokeDasharray="5 4"/><text x="184" y="0">งบสะสม</text>
+          <line x1="248" y1="-4" x2="268" y2="-4" stroke="#202028" strokeWidth="2"/><text x="272" y="0">ใช้จริงสะสม</text>
+        </g>
+      </svg>
+    </div>
+  );
+}
 
 export default function Budget(){
   const [budgets,setBudgets]=useState([]); const [actuals,setActuals]=useState([]);
   const [canManage,setCanManage]=useState(false);
   const [busy,setBusy]=useState(null); const [result,setResult]=useState(null); const [msg,setMsg]=useState(null);
-  const [period,setPeriod]=useState("all");
+  const [year,setYear]=useState(""); const [dept,setDept]=useState("all");
 
   async function load(){
     const { data:sess }=await supabase.auth.getSession();
@@ -51,34 +96,79 @@ export default function Budget(){
   }
   useEffect(()=>{ load(); },[]);
 
-  const periods=useMemo(()=>{
+  const years=useMemo(()=>{
     const s=new Set();
-    budgets.forEach(x=>x.period&&s.add(x.period));
-    actuals.forEach(x=>x.period&&s.add(x.period));
+    budgets.forEach(x=>x.period&&s.add(x.period.slice(0,4)));
+    actuals.forEach(x=>x.period&&s.add(x.period.slice(0,4)));
     return [...s].sort().reverse();
   },[budgets,actuals]);
+  useEffect(()=>{ if(!year && years.length) setYear(years[0]); },[years,year]);
 
+  const depts=useMemo(()=>{
+    const s=new Set();
+    budgets.forEach(x=>x.department&&s.add(x.department.trim()));
+    actuals.forEach(x=>x.department&&s.add(x.department.trim()));
+    return [...s].sort((a,b)=>a.localeCompare(b,"th"));
+  },[budgets,actuals]);
+
+  const inScope=x=>(!year||String(x.period||"").startsWith(year)) &&
+                   (dept==="all"||String(x.department||"").trim()===dept);
+  const B=useMemo(()=>budgets.filter(inScope),[budgets,year,dept]);
+  const A=useMemo(()=>actuals.filter(inScope),[actuals,year,dept]);
+
+  // ---------- รายเดือน + สะสม ----------
+  const months=useMemo(()=>{
+    const m=[];
+    for(let i=1;i<=12;i++){
+      const p=year+"-"+String(i).padStart(2,"0");
+      m.push({ p, label:MONTH_TH[i-1],
+        budget:B.filter(x=>x.period===p).reduce((s,x)=>s+(Number(x.amount)||0),0),
+        actual:A.filter(x=>x.period===p).reduce((s,x)=>s+(Number(x.amount)||0),0) });
+    }
+    let cb=0, ca=0;
+    m.forEach(x=>{ cb+=x.budget; ca+=x.actual; x.cumB=cb; x.cumA=ca; });
+    return m;
+  },[B,A,year]);
+
+  const lastIdx=useMemo(()=>{ let i=-1; months.forEach((m,k)=>{ if(m.actual>0) i=k; }); return i; },[months]);
+  const cur=lastIdx>=0?months[lastIdx]:null;
+  const prev=lastIdx>0?months[lastIdx-1]:null;
+  const mom = (cur&&prev&&prev.actual>0) ? Math.round(100*(cur.actual-prev.actual)/prev.actual) : null;
+
+  const ytdBudget=cur?cur.cumB:months.reduce((s,m)=>s+m.budget,0);
+  const ytdActual=cur?cur.cumA:0;
+  const yearBudget=months.reduce((s,m)=>s+m.budget,0);
+  const monthsWithActual=months.filter(m=>m.actual>0).length;
+  const runRate=monthsWithActual?ytdActual/monthsWithActual:0;
+  const forecast=runRate*12;
+  const pace = ytdBudget ? Math.round(100*ytdActual/ytdBudget) : 0;   // เทียบงบเฉพาะเดือนที่ผ่านมา
+  const yearPct = yearBudget ? Math.round(100*forecast/yearBudget) : 0;
+
+  // ---------- ตาราง ฝ่าย × cost code ----------
   const rows=useMemo(()=>{
-    const inP=x=>period==="all"||x.period===period;
     const map={};
     const key=(d,c)=>String(d).trim().toLowerCase()+"|"+String(c||"").trim().toLowerCase();
     const touch=(d,c)=>{ const k=key(d,c);
-      if(!map[k]) map[k]={dept:String(d).trim(),code:String(c||"").trim(),budget:0,actual:0};
+      if(!map[k]) map[k]={dept:String(d).trim(),code:String(c||"").trim(),budget:0,actual:0,curM:0,prevM:0};
       return map[k]; };
-    budgets.filter(inP).forEach(x=>{ touch(x.department,x.cost_code).budget+=Number(x.amount)||0; });
-    actuals.filter(inP).forEach(x=>{ touch(x.department,x.cost_code).actual+=Number(x.amount)||0; });
-    return Object.values(map).sort((a,b)=>
-      a.dept.localeCompare(b.dept,"th") || a.code.localeCompare(b.code,"th"));
-  },[budgets,actuals,period]);
+    B.forEach(x=>{ touch(x.department,x.cost_code).budget+=Number(x.amount)||0; });
+    A.forEach(x=>{ const r=touch(x.department,x.cost_code); const v=Number(x.amount)||0;
+      r.actual+=v;
+      if(cur && x.period===cur.p) r.curM+=v;
+      if(prev && x.period===prev.p) r.prevM+=v;
+    });
+    return Object.values(map).sort((a,b)=>a.dept.localeCompare(b.dept,"th")||a.code.localeCompare(b.code,"th"));
+  },[B,A,cur,prev]);
 
   const byDept=useMemo(()=>{
     const m={};
-    rows.forEach(r=>{ if(!m[r.dept]) m[r.dept]={dept:r.dept,budget:0,actual:0,lines:[]};
-      m[r.dept].budget+=r.budget; m[r.dept].actual+=r.actual; m[r.dept].lines.push(r); });
+    rows.forEach(r=>{ if(!m[r.dept]) m[r.dept]={dept:r.dept,budget:0,actual:0,curM:0,prevM:0,lines:[]};
+      const d=m[r.dept]; d.budget+=r.budget; d.actual+=r.actual; d.curM+=r.curM; d.prevM+=r.prevM; d.lines.push(r); });
     return Object.values(m).sort((a,b)=>b.actual-a.actual);
   },[rows]);
   const tot=byDept.reduce((s,d)=>({budget:s.budget+d.budget,actual:s.actual+d.actual}),{budget:0,actual:0});
 
+  // ---------- import ----------
   function tplBudget(){
     downloadCSV("dept_budget_template.csv",
       [{key:"department",label:"department"},{key:"period",label:"period"},{key:"cost_code",label:"cost_code"},
@@ -96,12 +186,21 @@ export default function Budget(){
   }
   const day=new Date().toISOString().slice(0,10);
   function exportView(){
-    downloadCSV("งบฝ่าย_"+(period==="all"?"ทุกงวด":period)+"_"+day+".csv",[
+    downloadCSV("งบฝ่าย_"+year+"_"+day+".csv",[
       {label:"ฝ่าย",key:"dept"},{label:"Cost Code",get:r=>r.code||"(รวมทั้งฝ่าย)"},
-      {label:"งบประมาณ",key:"budget"},{label:"ใช้จริง",key:"actual"},
+      {label:"งบทั้งปี",key:"budget"},{label:"ใช้จริงสะสม",key:"actual"},
       {label:"คงเหลือ",get:r=>r.budget-r.actual},
       {label:"% ใช้",get:r=>r.budget?Math.round(100*r.actual/r.budget):""},
+      {label:"เดือนล่าสุด",key:"curM"},{label:"เดือนก่อน",key:"prevM"},
+      {label:"MoM %",get:r=>r.prevM?Math.round(100*(r.curM-r.prevM)/r.prevM):""},
     ], rows);
+  }
+  function exportMonthly(){
+    downloadCSV("burn_rate_"+year+"_"+day+".csv",[
+      {label:"งวด",key:"p"},{label:"งบ",key:"budget"},{label:"ใช้จริง",key:"actual"},
+      {label:"งบสะสม",key:"cumB"},{label:"ใช้จริงสะสม",key:"cumA"},
+      {label:"% สะสม",get:m=>m.cumB?Math.round(100*m.cumA/m.cumB):""},
+    ], months);
   }
 
   async function importFile(e, kind){
@@ -119,9 +218,9 @@ export default function Budget(){
       const recs=[]; const errors=[]; const seen={};
       for(let r=1;r<grid.length;r++){
         const row=grid[r]; const g=k=>ix[k]>=0?String(row[ix[k]]??"").trim():"";
-        const dept=g("department"); const amt=toNum(g("amount"));
-        if(!dept && isNaN(amt)) continue;
-        if(!dept){ errors.push("แถว "+(r+1)+": ไม่ระบุฝ่าย"); continue; }
+        const d=g("department"); const amt=toNum(g("amount"));
+        if(!d && isNaN(amt)) continue;
+        if(!d){ errors.push("แถว "+(r+1)+": ไม่ระบุฝ่าย"); continue; }
         if(isNaN(amt)){ errors.push("แถว "+(r+1)+": จำนวนเงินไม่ใช่ตัวเลข ("+g("amount")+")"); continue; }
         const dd=toDate(g("doc_date"));
         const per=toPeriod(g("period"), dd);
@@ -129,10 +228,10 @@ export default function Budget(){
 
         if(kind==="budget"){
           const code=g("cost_code")||null;
-          const k2=dept.toLowerCase()+"|"+per+"|"+(code||"").toLowerCase();
-          if(seen[k2]){ errors.push("แถว "+(r+1)+": ซ้ำในไฟล์ ("+dept+" "+per+" "+(code||"รวม")+")"); continue; }
+          const k2=d.toLowerCase()+"|"+per+"|"+(code||"").toLowerCase();
+          if(seen[k2]){ errors.push("แถว "+(r+1)+": ซ้ำในไฟล์ ("+d+" "+per+" "+(code||"รวม")+")"); continue; }
           seen[k2]=1;
-          recs.push({ department:dept, period:per, cost_code:code, amount:amt,
+          recs.push({ department:d, period:per, cost_code:code, amount:amt,
             note:g("note")||null, source_file:file.name, updated_by:uid, updated_at:new Date().toISOString() });
         } else {
           const doc=g("doc_no");
@@ -141,7 +240,7 @@ export default function Budget(){
           const k2=doc+"#"+line;
           if(seen[k2]){ errors.push("แถว "+(r+1)+": ซ้ำในไฟล์ ("+k2+")"); continue; }
           seen[k2]=1;
-          recs.push({ department:dept, period:per, doc_no:doc, line_no:line, doc_date:dd,
+          recs.push({ department:d, period:per, doc_no:doc, line_no:line, doc_date:dd,
             cost_code:g("cost_code")||null, description:g("description")||null, vendor:g("vendor")||null,
             amount:amt, source_file:file.name, imported_by:uid });
         }
@@ -156,7 +255,6 @@ export default function Budget(){
           if(error) errors.push("บันทึกไม่สำเร็จ: "+error.message); else ok+=chunk.length;
         }
       } else {
-        // งบ: ลบของเดิม (ฝ่าย+งวด) ที่อยู่ในไฟล์ แล้วใส่ใหม่ → อัปโหลดซ้ำได้ ไม่บาน
         const scopes={};
         recs.forEach(c=>{ scopes[c.department+"|"+c.period]={dept:c.department,per:c.period}; });
         for(const s of Object.values(scopes)){
@@ -202,6 +300,8 @@ export default function Budget(){
     </div>);
   }
 
+  const hasData=budgets.length>0||actuals.length>0;
+
   return (<Shell title="งบประมาณฝ่าย (Department Budget)">
     {msg&&<div className="ok">{msg}</div>}
 
@@ -228,49 +328,116 @@ export default function Budget(){
       </div>)}
     </div>)}
 
-    <div className="card">
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:8}}>
-        <h2 style={{margin:0}}>Budget vs Actual รายฝ่าย</h2>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <select value={period} onChange={e=>setPeriod(e.target.value)} style={{minWidth:150}}>
-            <option value="all">ทุกงวด</option>
-            {periods.map(p=>(<option key={p} value={p}>{p}</option>))}
-          </select>
-          <button className="btn sm sec" onClick={exportView}>⬇ Export</button>
-        </div>
-      </div>
+    {!hasData ? (
+      <div className="card"><div className="muted">ยังไม่มีข้อมูล — อัปโหลดงบประมาณฝ่าย และ/หรือ ไฟล์ใช้จริงจากบัญชี</div></div>
+    ) : (<>
 
+    {/* ---------- ตัวกรอง ---------- */}
+    <div className="card" style={{paddingTop:14,paddingBottom:14}}>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+        <b style={{fontSize:13}}>ดูข้อมูล:</b>
+        <select value={year} onChange={e=>setYear(e.target.value)} style={{width:110}}>
+          {years.map(y=>(<option key={y} value={y}>ปี {y}</option>))}
+        </select>
+        <select value={dept} onChange={e=>setDept(e.target.value)} style={{minWidth:190}}>
+          <option value="all">ทุกฝ่าย ({depts.length})</option>
+          {depts.map(d=>(<option key={d} value={d}>{d}</option>))}
+        </select>
+        <div style={{flex:1}}/>
+        <button className="btn sm sec" onClick={exportMonthly}>⬇ Burn rate</button>
+        <button className="btn sm sec" onClick={exportView}>⬇ ตารางฝ่าย</button>
+      </div>
+    </div>
+
+    {/* ---------- KPI ---------- */}
+    <div className="kpis" style={{gridTemplateColumns:"repeat(5,1fr)"}}>
+      <div className="kpi">
+        <div className="n" style={{fontSize:20}}>{fmtMoney(yearBudget)}</div>
+        <div className="l">งบทั้งปี {year}</div>
+      </div>
+      <div className="kpi">
+        <div className="n" style={{fontSize:20}}>{fmtMoney(ytdActual)}</div>
+        <div className="l">ใช้จริงสะสม (YTD{cur?" ถึง "+cur.label:""})</div>
+      </div>
+      <div className="kpi" style={{borderTopColor:pctColor(pace)}}>
+        <div className="n" style={{fontSize:20,color:pctColor(pace)}}>{pace}%</div>
+        <div className="l">ใช้เทียบงบที่ควรใช้ถึงงวดนี้</div>
+      </div>
+      <div className="kpi">
+        <div className="n" style={{fontSize:20,color:(yearBudget-ytdActual)<0?"#B03A2E":"inherit"}}>{fmtMoney(yearBudget-ytdActual)}</div>
+        <div className="l">งบคงเหลือทั้งปี</div>
+      </div>
+      <div className="kpi" style={{borderTopColor:pctColor(yearPct)}}>
+        <div className="n" style={{fontSize:20,color:pctColor(yearPct)}}>{monthsWithActual?fmtMoney(forecast):"—"}</div>
+        <div className="l">คาดการณ์สิ้นปี {monthsWithActual?"("+yearPct+"% ของงบ)":""}</div>
+      </div>
+    </div>
+
+    {/* ---------- Burn rate ---------- */}
+    <div className="card">
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+        <h2 style={{margin:0}}>📈 Burn Rate รายเดือน — {dept==="all"?"ทุกฝ่าย":dept} · ปี {year}</h2>
+        {mom!==null&&cur&&(<div style={{fontSize:12.5}}>
+          <span className="muted">{cur.label} เทียบ {prev.label}: </span>
+          <b style={{color:mom>0?"#B03A2E":"#2E7D5B"}}>{mom>0?"▲ +":"▼ "}{mom}%</b>
+          <span className="muted"> ({fmtMoney(prev.actual)} → {fmtMoney(cur.actual)})</span>
+        </div>)}
+      </div>
+      <BurnChart months={months}/>
+      {monthsWithActual>0&&(
+        <p className="muted" style={{fontSize:12,marginTop:6,lineHeight:1.8}}>
+          เฉลี่ยใช้จริง <b>{fmtMoney(runRate)}</b>/เดือน (จาก {monthsWithActual} เดือนที่มีข้อมูล) →
+          ถ้าใช้อัตรานี้ต่อไปจนสิ้นปีจะอยู่ที่ <b style={{color:pctColor(yearPct)}}>{fmtMoney(forecast)}</b>
+          {yearBudget?<> เทียบงบ {fmtMoney(yearBudget)} = <b style={{color:pctColor(yearPct)}}>{yearPct}%</b>
+            {yearPct>100?<span style={{color:"#B03A2E"}}> — เสี่ยงเกินงบ {fmtMoney(forecast-yearBudget)}</span>:null}</>:null}
+        </p>
+      )}
+    </div>
+
+    {/* ---------- ตารางฝ่าย ---------- */}
+    <div className="card">
+      <h2>Budget vs Actual รายฝ่าย · ปี {year}</h2>
       <table><thead><tr>
-        <th>ฝ่าย / Cost Code</th><th className="right">งบประมาณ</th><th className="right">ใช้จริง</th>
+        <th>ฝ่าย / Cost Code</th>
+        <th className="right">งบทั้งปี</th><th className="right">ใช้จริงสะสม</th>
         <th className="right">คงเหลือ</th><th className="right">% ใช้</th>
+        <th className="right">{cur?cur.label:"เดือนล่าสุด"}</th>
+        <th className="right">{prev?prev.label:"เดือนก่อน"}</th>
+        <th className="right">MoM</th>
       </tr></thead>
       <tbody>{byDept.map(d=>{
         const pct=d.budget?Math.round(100*d.actual/d.budget):0; const rem=d.budget-d.actual;
+        const m=d.prevM?Math.round(100*(d.curM-d.prevM)/d.prevM):null;
         return (<Fragment key={d.dept}>
           <tr style={{background:"#F8FAFC",fontWeight:700}}>
             <td>{d.dept}</td>
             <td className="right">{d.budget?fmtMoney(d.budget):"—"}</td>
             <td className="right">{d.actual?fmtMoney(d.actual):"—"}</td>
             <td className="right" style={{color:rem<0?"#B03A2E":"inherit"}}>{d.budget?fmtMoney(rem):"—"}</td>
-            <td className="right">{d.budget
-              ? <span style={{color:pct>100?"#B03A2E":pct>85?"#B26A00":"#2E7D5B"}}>{pct}%</span>
-              : <span className="muted">ไม่มีงบ</span>}</td>
+            <td className="right">{d.budget?<span style={{color:pctColor(pct)}}>{pct}%</span>:<span className="muted">ไม่มีงบ</span>}</td>
+            <td className="right">{d.curM?fmtMoney(d.curM):"—"}</td>
+            <td className="right muted">{d.prevM?fmtMoney(d.prevM):"—"}</td>
+            <td className="right" style={{color:m===null?"#98A4AE":m>0?"#B03A2E":"#2E7D5B"}}>
+              {m===null?"—":(m>0?"▲ +":"▼ ")+m+"%"}</td>
           </tr>
           {d.lines.filter(l=>l.code).map((l,i)=>{
             const p=l.budget?Math.round(100*l.actual/l.budget):0; const rm=l.budget-l.actual;
+            const lm=l.prevM?Math.round(100*(l.curM-l.prevM)/l.prevM):null;
             return (<tr key={d.dept+"-"+i}>
               <td style={{paddingLeft:26}} className="muted">↳ {l.code}</td>
               <td className="right">{l.budget?fmtMoney(l.budget):"—"}</td>
               <td className="right">{l.actual?fmtMoney(l.actual):"—"}</td>
               <td className="right" style={{color:rm<0?"#B03A2E":"inherit"}}>{l.budget?fmtMoney(rm):"—"}</td>
-              <td className="right">{l.budget
-                ? <span style={{color:p>100?"#B03A2E":p>85?"#B26A00":"#2E7D5B"}}>{p}%</span>
-                : <span className="muted">—</span>}</td>
+              <td className="right">{l.budget?<span style={{color:pctColor(p)}}>{p}%</span>:<span className="muted">—</span>}</td>
+              <td className="right">{l.curM?fmtMoney(l.curM):"—"}</td>
+              <td className="right muted">{l.prevM?fmtMoney(l.prevM):"—"}</td>
+              <td className="right" style={{color:lm===null?"#98A4AE":lm>0?"#B03A2E":"#2E7D5B"}}>
+                {lm===null?"—":(lm>0?"▲ +":"▼ ")+lm+"%"}</td>
             </tr>);
           })}
         </Fragment>);
       })}
-      {!byDept.length&&<tr><td colSpan="5" className="muted">ยังไม่มีข้อมูล — อัปโหลดงบประมาณฝ่าย และ/หรือ ไฟล์ใช้จริงจากบัญชี</td></tr>}
+      {!byDept.length&&<tr><td colSpan="8" className="muted">ไม่มีข้อมูลในปี/ฝ่ายที่เลือก</td></tr>}
       </tbody>
       {byDept.length>0&&<tfoot><tr style={{fontWeight:700,borderTop:"2px solid #DDE3E8"}}>
         <td>รวม ({byDept.length} ฝ่าย)</td>
@@ -278,12 +445,17 @@ export default function Budget(){
         <td className="right">{fmtMoney(tot.actual)}</td>
         <td className="right" style={{color:tot.budget-tot.actual<0?"#B03A2E":"inherit"}}>{fmtMoney(tot.budget-tot.actual)}</td>
         <td className="right">{tot.budget?Math.round(100*tot.actual/tot.budget)+"%":"—"}</td>
+        <td className="right">{cur?fmtMoney(cur.actual):"—"}</td>
+        <td className="right">{prev?fmtMoney(prev.actual):"—"}</td>
+        <td className="right" style={{color:mom===null?"#98A4AE":mom>0?"#B03A2E":"#2E7D5B"}}>
+          {mom===null?"—":(mom>0?"▲ +":"▼ ")+mom+"%"}</td>
       </tr></tfoot>}
       </table>
       <p className="muted" style={{fontSize:11.5,marginTop:10}}>
-        แถวไฮไลต์ = รวมทั้งฝ่าย · แถวย่อย ↳ = แยกตาม Cost Code ·
-        ฝ่ายที่ขึ้นว่า <b>ไม่มีงบ</b> = มีการใช้จ่ายแต่ยังไม่ได้อัปโหลดงบของงวดนั้น
+        แถวไฮไลต์ = รวมทั้งฝ่าย · ↳ = แยกตาม Cost Code · <b>MoM</b> = เดือนล่าสุดเทียบเดือนก่อน (▲ แดง = ใช้เพิ่มขึ้น) ·
+        ฝ่ายที่ขึ้นว่า <b>ไม่มีงบ</b> = มีการใช้จ่ายแต่ยังไม่ได้อัปโหลดงบของปีนั้น
       </p>
     </div>
+    </>)}
   </Shell>);
 }
