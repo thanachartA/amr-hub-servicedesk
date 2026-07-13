@@ -16,6 +16,22 @@ export default function Admin(){
   const [impBusy,setImpBusy]=useState(false); const [impResult,setImpResult]=useState(null);
   // Form Builder
   const [editId,setEditId]=useState(null); const [draft,setDraft]=useState(null); const [prev,setPrev]=useState({}); const [saving,setSaving]=useState(false);
+  // Reset password (โดย Admin — ไม่ต้องยิงเมล)
+  const [pwBusy,setPwBusy]=useState(null); const [pwResult,setPwResult]=useState(null); const [copied,setCopied]=useState(false);
+  async function resetPassword(u){
+    if(!confirm("ตั้งรหัสผ่านชั่วคราวใหม่ให้ \""+(u.full_name||u.email)+"\" ?\n\nรหัสเดิมจะใช้ไม่ได้ทันที และผู้ใช้จะถูกบังคับให้ตั้งรหัสใหม่ตอนเข้าระบบครั้งถัดไป")) return;
+    setPwBusy(u.id); setPwResult(null); setMsg(null); setCopied(false);
+    const { data:sess }=await supabase.auth.getSession();
+    const res=await fetch("/api/admin/reset-password",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json", Authorization:"Bearer "+sess.session.access_token },
+      body: JSON.stringify({ user_id:u.id })
+    });
+    const j=await res.json().catch(()=>({error:"เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง"}));
+    setPwBusy(null);
+    if(!res.ok){ setMsg("ตั้งรหัสผ่านไม่สำเร็จ: "+(j.error||res.status)); return; }
+    setPwResult({ name:u.full_name||u.email, email:j.email, password:j.password });
+  }
   async function load(){
     const { data:prof }=await supabase.from("profiles").select("id,full_name,email,department,position,employee_id,role").order("full_name").limit(2000);
     const { data:t }=await supabase.from("hub_team").select("user_id,hub_role,is_available,profiles:user_id(id,full_name,email)");
@@ -332,7 +348,7 @@ export default function Admin(){
     <div className="card">
       <h2>สิทธิ์ผู้ใช้</h2>
       <div className="field" style={{maxWidth:340}}><label>ค้นหา ชื่อ / อีเมล</label><input value={q} onChange={e=>setQ(e.target.value)} placeholder="พิมพ์เพื่อค้นหา…"/></div>
-      <table><thead><tr><th>ชื่อ</th><th>อีเมล</th><th>ฝ่าย / ตำแหน่ง</th><th>สิทธิ์ใน Hub</th></tr></thead>
+      <table><thead><tr><th>ชื่อ</th><th>อีเมล</th><th>ฝ่าย / ตำแหน่ง</th><th>สิทธิ์ใน Hub</th><th>รหัสผ่าน</th></tr></thead>
       <tbody>{shown.map(r=>{ const role=team[r.id]||"none";
         return (<tr key={r.id}>
           <td><b>{r.full_name}</b>{r.employee_id&&<span className="muted" style={{marginLeft:6}}>{r.employee_id}</span>}</td>
@@ -345,9 +361,36 @@ export default function Admin(){
             <option value="supervisor">Supervisor — จัดการเต็ม (มอบหมาย+อนุมัติ+จัดการ user)</option>
             <option value="owner">Owner — สิทธิ์สูงสุด</option>
           </select></td>
+          <td><button type="button" className="btn sm sec" disabled={pwBusy===r.id} onClick={()=>resetPassword(r)} title="ตั้งรหัสผ่านชั่วคราวให้ทันที ไม่ต้องส่งอีเมล">
+            {pwBusy===r.id?"กำลังตั้ง…":"🔑 ตั้งรหัสใหม่"}
+          </button></td>
         </tr>); })}
-        {!shown.length&&<tr><td colSpan="4" className="muted">ไม่พบผู้ใช้</td></tr>}</tbody></table>
+        {!shown.length&&<tr><td colSpan="5" className="muted">ไม่พบผู้ใช้</td></tr>}</tbody></table>
       <p className="muted" style={{marginTop:10}}><b>Owner</b> = ทุก module · <b>Supervisor</b> = จัดการเต็ม (มอบหมาย+ตรวจ+อนุมัติค่าใช้จ่าย+จัดการผู้ใช้) · <b>Lead</b> = มอบหมาย+ตรวจงาน+เห็นทั้งหมด · <b>Agent</b> = เห็นเฉพาะงานที่ได้รับ · <b>ผู้ขอ</b> = เปิดคำขอ+ดูของตัวเอง</p>
+      <p className="muted" style={{marginTop:6}}>🔑 <b>ตั้งรหัสใหม่</b> = ระบบสุ่มรหัสชั่วคราวให้ทันที (ไม่ต้องส่งอีเมล) — แจ้งรหัสให้เจ้าตัวโดยตรง แล้วเขาจะถูกบังคับให้ตั้งรหัสของตัวเองตอนเข้าระบบครั้งถัดไป</p>
     </div>
+
+    {pwResult&&(<div style={{position:"fixed",inset:0,background:"rgba(32,32,40,.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100,padding:20}}
+      onClick={()=>setPwResult(null)}>
+      <div className="card" style={{maxWidth:460,width:"100%",margin:0}} onClick={e=>e.stopPropagation()}>
+        <h2 style={{marginTop:0}}>🔑 ตั้งรหัสผ่านชั่วคราวแล้ว</h2>
+        <p className="muted" style={{fontSize:13,lineHeight:1.7}}>
+          ส่งรหัสนี้ให้ <b>{pwResult.name}</b> ทางช่องทางที่ปลอดภัย (บอกด้วยตัวเอง / Teams DM)<br/>
+          <b style={{color:"#B03A2E"}}>รหัสนี้จะแสดงครั้งเดียว</b> — ปิดหน้าต่างแล้วดูซ้ำไม่ได้
+        </p>
+        <div className="field"><label>อีเมล</label>
+          <input readOnly value={pwResult.email||""} onFocus={e=>e.target.select()}/></div>
+        <div className="field"><label>รหัสผ่านชั่วคราว</label>
+          <input readOnly value={pwResult.password} className="mono"
+            style={{fontSize:18,letterSpacing:1,fontWeight:700,background:"#FFF8E6",borderColor:"#EBD9AE"}}
+            onFocus={e=>e.target.select()}/></div>
+        <div style={{display:"flex",gap:8}}>
+          <button type="button" className="btn" style={{flex:1}} onClick={()=>{
+            navigator.clipboard.writeText(pwResult.password).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});
+          }}>{copied?"✓ คัดลอกแล้ว":"คัดลอกรหัส"}</button>
+          <button type="button" className="btn sec" onClick={()=>setPwResult(null)}>ปิด</button>
+        </div>
+      </div>
+    </div>)}
   </Shell>);
 }
