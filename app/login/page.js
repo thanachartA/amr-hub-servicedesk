@@ -37,14 +37,20 @@ export default function Login(){
     setBusy(true);
     const { error }=await supabase.auth.signInWithOtp({ email:email.trim(), options:{ emailRedirectTo: ORIGIN() }});
     setBusy(false);
-    if(error) setErr(error.message); else setMsg("ส่งลิงก์เข้าสู่ระบบไปที่อีเมลแล้ว — เปิดเมลแล้วกดลิงก์");
+    if(error && /rate|too many|429/i.test(error.message||"")){ setErr("ขอลิงก์บ่อยเกินไป — รออีกสักครู่แล้วลองใหม่"); return; }
+    setMsg("ส่งลิงก์เข้าสู่ระบบไปที่อีเมลแล้ว — อาจใช้เวลา 1–2 นาที (เช็คใน Junk ด้วย)");
   }
   async function forgot(){ clr();
     if(!okDomain(email)){ setErr("กรอกอีเมล @amrasia.com ก่อน แล้วกด \"ลืมรหัสผ่าน\" อีกครั้ง"); return; }
     setBusy(true);
     const { error }=await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: ORIGIN()+"/reset" });
     setBusy(false);
-    if(error) setErr(error.message); else setMsg("ส่งลิงก์ตั้งรหัสผ่านใหม่ไปที่อีเมลแล้ว");
+    // เมลบริษัท (Office 365) ตอบช้ากว่า 10 วิ ทำให้ gateway คืน 504 ทั้งที่เมลส่งออกจริง
+    // → ไม่โชว์ error ให้ user ตกใจ ยกเว้นกรณีถูกจำกัดจำนวนครั้ง
+    if(error && /rate|too many|429/i.test(error.message||"")){
+      setErr("ขอลิงก์บ่อยเกินไป — รออีกสักครู่แล้วลองใหม่"); return;
+    }
+    setMsg("ถ้ามีบัญชีของอีเมลนี้ ระบบจะส่งลิงก์ตั้งรหัสผ่านใหม่ไปให้ — อาจใช้เวลา 1–2 นาที (เช็คใน Junk ด้วย)");
   }
 
   return (<div className="login">
