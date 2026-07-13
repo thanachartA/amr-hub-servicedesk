@@ -1,250 +1,295 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, Fragment } from "react";
 import Shell from "../../components/Shell";
 import { supabase } from "../../lib/supabaseClient";
-import { fmtMoney, downloadCSV, readSheet, toNum, toDate } from "../../components/util";
+import { fmtMoney, downloadCSV, readSheetAt, toNum, toDate } from "../../components/util";
 
 const APV={pending:"รออนุมัติ",approved:"อนุมัติแล้ว",rejected:"ไม่อนุมัติ"};
 
-// หัวคอลัมน์ที่ยอมรับ (รองรับทั้งไทย/อังกฤษ เผื่อ ERP export มาคนละชื่อ)
-const ALIAS={
-  project_code:["project_code","projectcode","รหัสโครงการ","project","job_no","job"],
-  doc_no:["doc_no","docno","document_no","เลขที่เอกสาร","voucher","voucher_no","ref","doc"],
-  line_no:["line_no","lineno","line","บรรทัด","item_no"],
-  doc_date:["doc_date","date","วันที่","posting_date","วันที่เอกสาร"],
-  cost_code:["cost_code","costcode","รหัสต้นทุน","account","account_code"],
-  description:["description","desc","รายละเอียด","detail","narration"],
-  vendor:["vendor","supplier","ผู้ขาย","คู่ค้า"],
-  amount:["amount","จำนวนเงิน","total","ยอดเงิน","value","debit"],
+// หัวคอลัมน์ของ ERP Budget Report (sheet "BudgetReport")
+const A={
+  ref_code:["ref._code","ref_code","refcode","ref"],
+  project_code:["project_code","projectcode","project_no","รหัสโครงการ"],
+  project_name:["project_name","projectname","ชื่อโครงการ"],
+  cost_code:["cost_code","costcode","รหัสต้นทุน"],
+  description:["description","desc","รายละเอียด"],
+  pm_name:["pm_name","pmname","pm","ผู้จัดการโครงการ"],
+  budget:["budget","งบประมาณ"],
+  purchase_cost:["purchase_cost","purchasecost"],
+  actual_ac:["actual_cost_(a/c)","actual_cost_(ac)","actual_cost_a/c","actual_cost"],
+  unbook:["unbook"],
+  actual_all:["actual_cost_(all)","actual_cost_all"],
 };
-function mapHeader(head){
-  const norm=head.map(h=>String(h||"").trim().toLowerCase().replace(/\s+/g,"_"));
-  const idx={};
-  for(const key in ALIAS) idx[key]=norm.findIndex(h=>ALIAS[key].includes(h));
-  return idx;
+const norm=s=>String(s??"").trim().toLowerCase().replace(/[\s\n\r]+/g,"_");
+function mapHead(head){
+  const cells=head.map(norm);
+  const ix={};
+  for(const k in A) ix[k]=cells.findIndex(c=>A[k].includes(c));
+  return ix;
 }
+// Project Code จาก ERP มีอักขระซ่อน (zero-width) ติดมา
+const clean=s=>String(s??"").replace(/[​-‍﻿‌]/g,"").trim();
 
 export default function Projects(){
-  const [rows,setRows]=useState([]); const [detail,setDetail]=useState([]);
-  const [erp,setErp]=useState([]); const [canManage,setCanManage]=useState(false);
+  const [pb,setPb]=useState([]); const [detail,setDetail]=useState([]);
+  const [canManage,setCanManage]=useState(false);
   const [busy,setBusy]=useState(false); const [result,setResult]=useState(null); const [msg,setMsg]=useState(null);
+  const [q,setQ]=useState(""); const [onlyOver,setOnlyOver]=useState(false);
+  const [syncProjects,setSyncProjects]=useState(true);
 
   async function load(){
     const { data:sess }=await supabase.auth.getSession();
     const { data:t }=await supabase.from("hub_team").select("hub_role").eq("user_id",sess.session.user.id).maybeSingle();
     setCanManage(["owner","supervisor"].includes(t?.hub_role));
-
-    const [{ data:exp }, { data:erpRows }, { data:projs }]=await Promise.all([
+    const [p,e]=await Promise.all([
+      supabase.from("hub_project_budget").select("*").limit(20000),
       supabase.from("hub_expense_entries")
-        .select("amount,approval_status,created_at,erp_ref,project_id,projects(code,name,budget_amount),hub_cost_codes(code,name),hub_requests(ticket_no,title)"),
-      supabase.from("hub_erp_costs").select("project_id,project_code,doc_no,line_no,doc_date,cost_code,description,vendor,amount").limit(20000),
-      supabase.from("projects").select("id,code,name,budget_amount").limit(1000),
+        .select("amount,approval_status,created_at,project_id,projects(code,name),hub_cost_codes(code,name),hub_requests(ticket_no,title)"),
     ]);
-    setDetail(exp||[]); setErp(erpRows||[]);
-
-    const map={};
-    const touch=(pid,code,name,budget)=>{
-      if(!map[pid]) map[pid]={code,name,budget:Number(budget)||0,actual:0,pending:0,erp:0};
-      return map[pid];
-    };
-    (exp||[]).forEach(x=>{ if(!x.project_id) return; const p=x.projects||{};
-      const m=touch(x.project_id,p.code,p.name,p.budget_amount);
-      m.actual+=Number(x.amount)||0;
-      if(x.approval_status==="pending") m.pending+=Number(x.amount)||0;
-    });
-    const byId={}; (projs||[]).forEach(p=>byId[p.id]=p);
-    (erpRows||[]).forEach(x=>{
-      const key=x.project_id||("code:"+x.project_code);
-      const p=x.project_id?byId[x.project_id]:null;
-      const m=touch(key, p?.code||x.project_code, p?.name||"(ไม่พบรหัสโครงการนี้ในระบบ)", p?.budget_amount);
-      m.erp+=Number(x.amount)||0;
-    });
-    setRows(Object.values(map).sort((a,b)=>(b.erp+b.actual)-(a.erp+a.actual)));
+    setPb(p.data||[]); setDetail(e.data||[]);
   }
   useEffect(()=>{ load(); },[]);
 
+  // ค่าใช้จ่ายที่ Hub บันทึกเอง (รายโครงการ)
+  const hubByCode=useMemo(()=>{
+    const m={};
+    detail.forEach(x=>{ const c=x.projects?.code; if(!c) return;
+      m[c]=(m[c]||0)+(Number(x.amount)||0); });
+    return m;
+  },[detail]);
+
+  // รวมเป็นรายโครงการ
+  const rows=useMemo(()=>{
+    const m={};
+    pb.forEach(x=>{
+      const k=x.ref_code;
+      if(!m[k]) m[k]={ref:k,code:x.project_code,name:x.project_name,pm:x.pm_name,
+        budget:0,purchase:0,actual:0,unbook:0,lines:[],asOf:x.as_of};
+      const r=m[k];
+      r.budget+=Number(x.budget)||0;
+      r.purchase+=Number(x.purchase_cost)||0;
+      r.actual+=Number(x.actual_all)||0;
+      r.unbook+=Number(x.unbook)||0;
+      r.lines.push(x);
+    });
+    return Object.values(m).map(r=>({...r, hub:hubByCode[r.ref]||0, balance:r.budget-r.actual}))
+      .sort((a,b)=>b.actual-a.actual);
+  },[pb,hubByCode]);
+
+  const shown=useMemo(()=>rows.filter(r=>{
+    if(onlyOver && r.balance>=0) return false;
+    if(!q) return true;
+    const s=q.toLowerCase();
+    return (r.ref||"").toLowerCase().includes(s) || (r.code||"").toLowerCase().includes(s)
+        || (r.name||"").toLowerCase().includes(s) || (r.pm||"").toLowerCase().includes(s);
+  }),[rows,q,onlyOver]);
+
+  const tot=rows.reduce((s,r)=>({budget:s.budget+r.budget,actual:s.actual+r.actual,
+    purchase:s.purchase+r.purchase,over:s.over+(r.balance<0?1:0)}),{budget:0,actual:0,purchase:0,over:0});
+  const asOf=pb.find(x=>x.as_of)?.as_of;
+
   const day=new Date().toISOString().slice(0,10);
   function exportSummary(){
-    downloadCSV("ต้นทุนรายโครงการ_สรุป_"+day+".csv",[
-      {label:"โครงการ",get:r=>(r.code||"")+" · "+(r.name||"")},
-      {label:"งบประมาณ",key:"budget"},
-      {label:"Hub บันทึก",key:"actual"},
-      {label:"ERP จริง",key:"erp"},
-      {label:"ผลต่าง (ERP-Hub)",get:r=>r.erp-r.actual},
-      {label:"คงเหลือจากงบ",get:r=>r.budget-Math.max(r.erp,r.actual)},
-      {label:"% ใช้",get:r=>r.budget?Math.round(100*Math.max(r.erp,r.actual)/r.budget):0},
-      {label:"รออนุมัติ",key:"pending"},
+    downloadCSV("ต้นทุนโครงการ_"+day+".csv",[
+      {label:"Ref. Code",key:"ref"},{label:"Project Code",key:"code"},{label:"ชื่อโครงการ",key:"name"},
+      {label:"PM",key:"pm"},{label:"Budget",key:"budget"},{label:"Purchase Cost",key:"purchase"},
+      {label:"Actual (ALL)",key:"actual"},{label:"Balance",key:"balance"},
+      {label:"% ใช้",get:r=>r.budget?Math.round(100*r.actual/r.budget):""},
+      {label:"Hub บันทึก",key:"hub"},
     ], rows);
   }
-  function exportDetail(){
-    downloadCSV("ค่าใช้จ่าย_Hub_"+day+".csv",[
-      {label:"วันที่",get:r=>r.created_at?new Date(r.created_at).toLocaleString("th-TH"):""},
-      {label:"Ticket",get:r=>r.hub_requests?.ticket_no||""},
-      {label:"งาน",get:r=>r.hub_requests?.title||""},
-      {label:"โครงการ",get:r=>r.projects?(r.projects.code+" · "+r.projects.name):""},
-      {label:"Cost Code",get:r=>r.hub_cost_codes?(r.hub_cost_codes.code+" · "+r.hub_cost_codes.name):""},
-      {label:"จำนวนเงิน",key:"amount"},
-      {label:"สถานะอนุมัติ",get:r=>APV[r.approval_status]||r.approval_status},
-      {label:"ERP Ref",key:"erp_ref"},
-    ], detail);
-  }
-  function erpTemplate(){
-    downloadCSV("erp_cost_template.csv",[
-      {key:"project_code",label:"project_code"},{key:"doc_no",label:"doc_no"},{key:"line_no",label:"line_no"},
-      {key:"doc_date",label:"doc_date"},{key:"cost_code",label:"cost_code"},{key:"description",label:"description"},
-      {key:"vendor",label:"vendor"},{key:"amount",label:"amount"},
-    ],[{project_code:"PRJ-001",doc_no:"PV6900123",line_no:1,doc_date:"2026-07-01",
-        cost_code:"5101",description:"ค่าเดินทางติดตั้งอุปกรณ์",vendor:"บริษัท ก จำกัด",amount:15000}]);
-  }
-  function exportErp(){
-    downloadCSV("ต้นทุน_ERP_"+day+".csv",[
-      {label:"รหัสโครงการ",key:"project_code"},{label:"เลขที่เอกสาร",key:"doc_no"},{label:"บรรทัด",key:"line_no"},
-      {label:"วันที่",key:"doc_date"},{label:"Cost Code",key:"cost_code"},{label:"รายละเอียด",key:"description"},
-      {label:"ผู้ขาย",key:"vendor"},{label:"จำนวนเงิน",key:"amount"},
-    ], erp);
+  function exportLines(){
+    downloadCSV("ต้นทุนโครงการ_รายcostcode_"+day+".csv",[
+      {label:"Ref. Code",key:"ref_code"},{label:"Project Code",key:"project_code"},{label:"ชื่อโครงการ",key:"project_name"},
+      {label:"Cost Code",key:"cost_code"},{label:"Description",key:"description"},{label:"PM",key:"pm_name"},
+      {label:"Budget",key:"budget"},{label:"Purchase Cost",key:"purchase_cost"},
+      {label:"Actual (A/C)",key:"actual_ac"},{label:"Unbook",key:"unbook"},{label:"Actual (ALL)",key:"actual_all"},
+    ], pb);
   }
 
-  async function importErp(e){
+  async function importFile(e){
     const file=e.target.files?.[0]; e.target.value="";
     if(!file) return;
     setBusy(true); setResult(null); setMsg(null);
     try{
-      const grid=await readSheet(file);
-      if(grid.length<2) throw new Error("ไฟล์ว่าง หรือมีแต่หัวตาราง");
-      const ix=mapHeader(grid[0]);
-      const need=["project_code","doc_no","amount"].filter(k=>ix[k]<0);
-      if(need.length) throw new Error("ไม่พบคอลัมน์: "+need.join(", ")+" — โหลดเทมเพลตไปใช้ก่อน");
+      const { grid, headerRow }=await readSheetAt(file,{ sheetName:"BudgetReport", mustHave:["ref._code","cost_code","budget"] });
+      if(grid.length<2) throw new Error("ไฟล์ว่าง หรือหาหัวตารางไม่เจอ");
+      const ix=mapHead(grid[0]);
+      const need=["ref_code","budget"].filter(k=>ix[k]<0);
+      if(need.length) throw new Error("ไม่พบคอลัมน์: "+need.join(", ")+" — ต้องเป็น sheet \"BudgetReport\" จาก ERP");
 
-      const { data:projs }=await supabase.from("projects").select("id,code").limit(2000);
-      const byCode={}; (projs||[]).forEach(p=>{ if(p.code) byCode[String(p.code).trim().toLowerCase()]=p.id; });
+      const { data:sess }=await supabase.auth.getSession(); const uid=sess.session.user.id;
+      const g=(row,k)=>ix[k]>=0?clean(row[ix[k]]):"";
+      const n=(row,k)=>{ const v=toNum(g(row,k)); return isNaN(v)?0:v; };
 
-      const { data:sess }=await supabase.auth.getSession();
-      const uid=sess.session.user.id;
-
-      const recs=[]; const errors=[]; const seen={}; const unmatched=new Set();
+      const recs=[]; const errors=[]; const seen={};
       for(let r=1;r<grid.length;r++){
-        const row=grid[r]; const g=k=>ix[k]>=0?String(row[ix[k]]??"").trim():"";
-        const code=g("project_code"), doc=g("doc_no");
-        const amt=toNum(g("amount"));
-        if(!code&&!doc&&isNaN(amt)) continue;
-        if(!code||!doc){ errors.push("แถว "+(r+1)+": ขาด project_code หรือ doc_no"); continue; }
-        if(isNaN(amt)){ errors.push("แถว "+(r+1)+": จำนวนเงินไม่ใช่ตัวเลข ("+g("amount")+")"); continue; }
-        const line=ix.line_no>=0 ? (parseInt(g("line_no"),10)||1) : 1;
-        const key=doc+"#"+line;
-        if(seen[key]){ errors.push("แถว "+(r+1)+": ซ้ำในไฟล์ ("+key+")"); continue; }
+        const row=grid[r];
+        const ref=g(row,"ref_code");
+        if(!ref) continue;
+        const cc=g(row,"cost_code")||"";
+        const key=ref+"|"+cc;
+        if(seen[key]){ errors.push("แถว "+(r+headerRow+1)+": ซ้ำในไฟล์ ("+ref+" / "+cc+")"); continue; }
         seen[key]=1;
-        const pid=byCode[code.toLowerCase()]||null;
-        if(!pid) unmatched.add(code);
-        recs.push({ project_id:pid, project_code:code, doc_no:doc, line_no:line,
-          doc_date: toDate(g("doc_date")), cost_code:g("cost_code")||null,
-          description:g("description")||null, vendor:g("vendor")||null,
-          amount:amt, source_file:file.name, imported_by:uid });
+        recs.push({
+          ref_code:ref, project_code:g(row,"project_code")||null, project_name:g(row,"project_name")||null,
+          cost_code:cc, description:g(row,"description")||null, pm_name:g(row,"pm_name")||null,
+          budget:n(row,"budget"), purchase_cost:n(row,"purchase_cost"),
+          actual_ac:n(row,"actual_ac"), unbook:n(row,"unbook"),
+          actual_all: ix.actual_all>=0 ? n(row,"actual_all") : (n(row,"actual_ac")+n(row,"unbook")),
+          as_of:new Date().toISOString().slice(0,10),
+          source_file:file.name, imported_by:uid,
+        });
       }
       if(!recs.length) throw new Error("ไม่มีแถวที่ใช้ได้เลย");
 
+      // 1) snapshot = ล้างของเดิมแล้วใส่ใหม่ทั้งชุด
+      const { error:delErr }=await supabase.from("hub_project_budget").delete()
+        .neq("id","00000000-0000-0000-0000-000000000000");
+      if(delErr) errors.push("ล้างข้อมูลเดิมไม่สำเร็จ: "+delErr.message);
+
+      // 2) sync ทะเบียนโครงการ (ถ้าเลือก)
+      let created=0;
+      const { data:projs }=await supabase.from("projects").select("id,code").limit(5000);
+      const byCode={}; (projs||[]).forEach(p=>{ if(p.code) byCode[p.code.trim().toLowerCase()]=p.id; });
+      if(syncProjects){
+        const master={};
+        recs.forEach(x=>{ if(!master[x.ref_code]) master[x.ref_code]={code:x.ref_code,name:x.project_name||x.ref_code,budget:0};
+          master[x.ref_code].budget+=x.budget; });
+        const news=Object.values(master).filter(m=>!byCode[m.code.toLowerCase()]);
+        for(let i=0;i<news.length;i+=200){
+          const chunk=news.slice(i,i+200).map(m=>({code:m.code,name:m.name,budget_amount:m.budget,status:"active"}));
+          const { data:ins, error }=await supabase.from("projects").insert(chunk).select("id,code");
+          if(error) errors.push("สร้างโครงการใหม่ไม่สำเร็จ: "+error.message);
+          else { created+=ins.length; ins.forEach(p=>{ byCode[p.code.trim().toLowerCase()]=p.id; }); }
+        }
+      }
+      recs.forEach(x=>{ x.project_id=byCode[x.ref_code.toLowerCase()]||null; });
+
+      // 3) insert
       let ok=0;
       for(let i=0;i<recs.length;i+=300){
-        const { error }=await supabase.from("hub_erp_costs")
-          .upsert(recs.slice(i,i+300),{onConflict:"doc_no,line_no"});
-        if(error) errors.push("บันทึกไม่สำเร็จ: "+error.message);
-        else ok+=Math.min(300,recs.length-i);
+        const chunk=recs.slice(i,i+300);
+        const { error }=await supabase.from("hub_project_budget").insert(chunk);
+        if(error) errors.push("บันทึกไม่สำเร็จ: "+error.message); else ok+=chunk.length;
       }
-      setResult({ ok, total:recs.length, errors, unmatched:[...unmatched],
-        sum:recs.reduce((s,x)=>s+x.amount,0) });
+      const unmatched=recs.filter(x=>!x.project_id).length;
+      setResult({ ok, total:recs.length, errors, created, unmatched,
+        budget:recs.reduce((s,x)=>s+x.budget,0), actual:recs.reduce((s,x)=>s+x.actual_all,0) });
       await load();
     }catch(ex){ setResult({ errors:[ex.message] }); }
     setBusy(false);
   }
 
-  async function clearErp(){
-    if(!confirm("ลบข้อมูลต้นทุน ERP ทั้งหมด ("+erp.length+" แถว) ?\n\nย้อนกลับไม่ได้ — ใช้เมื่อต้องการ import ใหม่ทั้งชุดเท่านั้น")) return;
-    const { error }=await supabase.from("hub_erp_costs").delete().neq("id","00000000-0000-0000-0000-000000000000");
+  async function clearAll(){
+    if(!confirm("ลบข้อมูลต้นทุนโครงการทั้งหมด ("+pb.length+" แถว) ?\n\nย้อนกลับไม่ได้")) return;
+    const { error }=await supabase.from("hub_project_budget").delete().neq("id","00000000-0000-0000-0000-000000000000");
     if(error){ setMsg("ลบไม่สำเร็จ: "+error.message); return; }
-    setMsg("ลบข้อมูล ERP ทั้งหมดแล้ว"); setResult(null); await load();
+    setMsg("ลบเรียบร้อย"); setResult(null); await load();
   }
-
-  const tot=rows.reduce((s,r)=>({budget:s.budget+r.budget,actual:s.actual+r.actual,erp:s.erp+r.erp}),{budget:0,actual:0,erp:0});
 
   return (<Shell title="รายงานต้นทุนรายโครงการ">
     {msg&&<div className="ok">{msg}</div>}
 
     {canManage&&(<div className="card">
-      <h2>📥 นำเข้าต้นทุนจริงจาก ERP (Excel / CSV)</h2>
+      <h2>📥 นำเข้า ERP Budget Report</h2>
       <p className="muted" style={{fontSize:12.5,lineHeight:1.8,marginTop:-4}}>
-        อัปโหลดไฟล์ที่ export จาก ERP เพื่อเทียบกับค่าใช้จ่ายที่ Hub บันทึกไว้<br/>
-        คอลัมน์บังคับ: <span className="mono">project_code, doc_no, amount</span> ·
-        ไม่บังคับ: <span className="mono">line_no, doc_date, cost_code, description, vendor</span><br/>
-        ระบบใช้ <b>doc_no + line_no</b> เป็นตัวกันซ้ำ → <b>อัปโหลดไฟล์เดิมซ้ำได้ ข้อมูลไม่บาน</b> (ทับของเดิม)
+        อัปโหลดไฟล์ <span className="mono">Budget Report_*.xlsx</span> ที่ export จาก ERP ได้ตรง ๆ —
+        ระบบอ่าน sheet <b>BudgetReport</b> และหาหัวตารางเอง<br/>
+        ใช้ <b>Ref. Code</b> เป็นตัวแมตช์โครงการ · เป็น <b>snapshot</b> → อัปโหลดใหม่ = <b>แทนที่ของเดิมทั้งชุด</b> (ข้อมูลไม่บาน)
       </p>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginTop:12}}>
-        <button type="button" className="btn sm sec" onClick={erpTemplate}>⬇ โหลดเทมเพลต</button>
+      <label style={{display:"flex",alignItems:"center",gap:8,margin:"10px 0",fontSize:12.5,cursor:"pointer"}}>
+        <input type="checkbox" checked={syncProjects} onChange={e=>setSyncProjects(e.target.checked)} style={{width:"auto",margin:0}}/>
+        สร้างโครงการที่ยังไม่มีในระบบให้อัตโนมัติ (จาก Ref. Code + ชื่อ + งบ)
+      </label>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
         <label className="btn sm" style={{cursor:"pointer",margin:0}}>
-          {busy?"กำลังอ่านไฟล์…":"⬆ อัปโหลดไฟล์ ERP (.xlsx / .csv)"}
-          <input type="file" accept=".xlsx,.xls,.csv" onChange={importErp} disabled={busy} style={{display:"none"}}/>
+          {busy?"กำลังอ่านไฟล์…":"⬆ อัปโหลด Budget Report (.xlsx)"}
+          <input type="file" accept=".xlsx,.xls,.csv" onChange={importFile} disabled={busy} style={{display:"none"}}/>
         </label>
-        {erp.length>0&&<>
-          <button type="button" className="btn sm sec" onClick={exportErp}>⬇ Export ERP ({erp.length})</button>
-          <button type="button" className="btn sm sec" style={{color:"#B03A2E"}} onClick={clearErp}>ลบข้อมูล ERP ทั้งหมด</button>
+        {pb.length>0&&<>
+          <button type="button" className="btn sm sec" onClick={exportLines}>⬇ Export รายละเอียด ({pb.length})</button>
+          <button type="button" className="btn sm sec" style={{color:"#B03A2E"}} onClick={clearAll}>ล้างข้อมูล</button>
         </>}
       </div>
-      {result&&(<div style={{marginTop:12,background:"#F8FAFC",border:"1px solid #E4E7EB",borderRadius:8,padding:"10px 12px",fontSize:12.5,lineHeight:1.8}}>
-        {result.ok>0&&<div>✅ นำเข้าสำเร็จ <b>{result.ok}</b> / {result.total} แถว · รวมเป็นเงิน <b>{fmtMoney(result.sum)}</b></div>}
-        {result.unmatched?.length>0&&<div style={{color:"#B26A00"}}>
-          ⚠️ รหัสโครงการที่ยังไม่มีในระบบ {result.unmatched.length} รหัส (บันทึกไว้แล้ว แต่จะไม่ผูกกับงบ):
-          <span className="mono"> {result.unmatched.slice(0,15).join(", ")}</span>{result.unmatched.length>15?" …":""}
-        </div>}
+      {result&&(<div style={{marginTop:12,background:"#F8FAFC",border:"1px solid #E4E7EB",borderRadius:8,padding:"10px 12px",fontSize:12.5,lineHeight:1.9}}>
+        {result.ok>0&&<>
+          <div>✅ นำเข้า <b>{result.ok}</b> / {result.total} แถว</div>
+          <div>งบรวม <b>{fmtMoney(result.budget)}</b> · ใช้จริงรวม <b>{fmtMoney(result.actual)}</b></div>
+          {result.created>0&&<div style={{color:"#2E7D5B"}}>➕ สร้างโครงการใหม่ในระบบ <b>{result.created}</b> รายการ</div>}
+          {result.unmatched>0&&<div style={{color:"#B26A00"}}>⚠️ ยังไม่ผูกกับทะเบียนโครงการ {result.unmatched} แถว</div>}
+        </>}
         {result.errors?.length>0&&<div style={{color:"#B03A2E"}}>
-          ⚠️ ข้าม/ผิดพลาด {result.errors.length} รายการ:
-          <ul style={{margin:"4px 0 0 18px"}}>{result.errors.slice(0,8).map((e,i)=>(<li key={i}>{e}</li>))}</ul>
-          {result.errors.length>8&&<div className="muted">…และอีก {result.errors.length-8} รายการ</div>}
+          ⚠️ ปัญหา {result.errors.length} รายการ:
+          <ul style={{margin:"4px 0 0 18px"}}>{result.errors.slice(0,6).map((e,i)=>(<li key={i}>{e}</li>))}</ul>
         </div>}
       </div>)}
     </div>)}
 
+    {pb.length===0 ? (
+      <div className="card"><div className="muted">ยังไม่มีข้อมูล — อัปโหลด ERP Budget Report เพื่อดู Budget vs Actual รายโครงการ</div></div>
+    ) : (<>
+
+    <div className="kpis" style={{gridTemplateColumns:"repeat(5,1fr)"}}>
+      <div className="kpi"><div className="n" style={{fontSize:19}}>{rows.length}</div><div className="l">โครงการ{asOf?" (ณ "+asOf+")":""}</div></div>
+      <div className="kpi"><div className="n" style={{fontSize:19}}>{fmtMoney(tot.budget)}</div><div className="l">Budget รวม</div></div>
+      <div className="kpi"><div className="n" style={{fontSize:19}}>{fmtMoney(tot.actual)}</div><div className="l">Actual (ALL) รวม</div></div>
+      <div className="kpi" style={{borderTopColor:tot.budget-tot.actual<0?"#B03A2E":undefined}}>
+        <div className="n" style={{fontSize:19,color:tot.budget-tot.actual<0?"#B03A2E":"inherit"}}>{fmtMoney(tot.budget-tot.actual)}</div>
+        <div className="l">Balance รวม</div></div>
+      <div className="kpi red"><div className="n" style={{fontSize:19}}>{tot.over}</div><div className="l">โครงการที่เกินงบ</div></div>
+    </div>
+
     <div className="card">
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,flexWrap:"wrap",gap:8}}>
-        <h2 style={{margin:0}}>Budget vs Actual</h2>
-        <div style={{display:"flex",gap:8}}>
-          <button className="btn sm sec" onClick={exportSummary}>⬇ สรุป (CSV)</button>
-          <button className="btn sm sec" onClick={exportDetail}>⬇ รายการ Hub ({detail.length})</button>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:8}}>
+        <h2 style={{margin:0}}>Budget vs Actual รายโครงการ</h2>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="ค้นหา Ref / ชื่อ / PM…" style={{width:220}}/>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12.5,cursor:"pointer",whiteSpace:"nowrap"}}>
+            <input type="checkbox" checked={onlyOver} onChange={e=>setOnlyOver(e.target.checked)} style={{width:"auto",margin:0}}/>
+            เฉพาะที่เกินงบ
+          </label>
+          <button className="btn sm sec" onClick={exportSummary}>⬇ Export</button>
         </div>
       </div>
-      <p className="muted" style={{fontSize:12,marginTop:0}}>
-        <b>Hub</b> = ค่าใช้จ่ายที่บันทึกผ่านคำขอในระบบนี้ · <b>ERP</b> = ต้นทุนจริงที่ import เข้ามา ·
-        <b> ผลต่าง</b> = ERP − Hub (บวก = ERP มีรายการที่ Hub ยังไม่ได้บันทึก)
-      </p>
       <table><thead><tr>
-        <th>โครงการ</th><th className="right">งบ</th><th className="right">Hub บันทึก</th>
-        <th className="right">ERP จริง</th><th className="right">ผลต่าง</th><th className="right">% ใช้</th><th className="right">รออนุมัติ</th>
+        <th>โครงการ</th><th>PM</th>
+        <th className="right">Budget</th><th className="right">Purchase</th>
+        <th className="right">Actual (ALL)</th><th className="right">Balance</th><th className="right">% ใช้</th>
       </tr></thead>
-      <tbody>{rows.map((r,i)=>{
-        const used=Math.max(r.erp,r.actual);
-        const pct=r.budget?Math.round(100*used/r.budget):0;
-        const diff=r.erp-r.actual;
-        return (<tr key={i}>
-          <td>{r.code} · <span className={r.name?.startsWith("(")?"muted":""}>{r.name}</span></td>
+      <tbody>{shown.slice(0,300).map(r=>{
+        const pct=r.budget?Math.round(100*r.actual/r.budget):0;
+        return (<tr key={r.ref}>
+          <td><b className="mono" style={{fontSize:12}}>{r.ref}</b>
+            <div className="muted" style={{fontSize:11.5}}>{r.name}</div></td>
+          <td className="muted" style={{fontSize:11.5}}>{r.pm||"—"}</td>
           <td className="right">{r.budget?fmtMoney(r.budget):"—"}</td>
-          <td className="right">{r.actual?fmtMoney(r.actual):"—"}</td>
-          <td className="right"><b>{r.erp?fmtMoney(r.erp):"—"}</b></td>
-          <td className="right" style={{color:diff>0?"#B26A00":diff<0?"#2E7D5B":"#98A4AE"}}>
-            {diff?(diff>0?"+":"")+fmtMoney(diff):"—"}</td>
+          <td className="right muted">{r.purchase?fmtMoney(r.purchase):"—"}</td>
+          <td className="right"><b>{r.actual?fmtMoney(r.actual):"—"}</b></td>
+          <td className="right" style={{color:r.balance<0?"#B03A2E":"inherit"}}>{fmtMoney(r.balance)}</td>
           <td className="right">{r.budget
             ? <b style={{color:pct>100?"#B03A2E":pct>85?"#B26A00":"#2E7D5B"}}>{pct}%</b>
-            : <span className="muted">—</span>}</td>
-          <td className="right muted">{r.pending?fmtMoney(r.pending):"—"}</td>
-        </tr>); })}
-        {!rows.length&&<tr><td colSpan="7" className="muted">ยังไม่มีข้อมูล — อัปโหลดไฟล์ ERP หรือสร้างคำขอที่มีค่าใช้จ่าย</td></tr>}
+            : <span className="muted">ไม่มีงบ</span>}</td>
+        </tr>);
+      })}
+      {!shown.length&&<tr><td colSpan="7" className="muted">ไม่พบโครงการที่ค้นหา</td></tr>}
       </tbody>
-      {rows.length>0&&<tfoot><tr style={{fontWeight:700,borderTop:"2px solid #DDE3E8"}}>
-        <td>รวมทั้งหมด ({rows.length} โครงการ)</td>
-        <td className="right">{fmtMoney(tot.budget)}</td>
-        <td className="right">{fmtMoney(tot.actual)}</td>
-        <td className="right">{fmtMoney(tot.erp)}</td>
-        <td className="right">{fmtMoney(tot.erp-tot.actual)}</td>
-        <td className="right">{tot.budget?Math.round(100*Math.max(tot.erp,tot.actual)/tot.budget)+"%":"—"}</td>
+      {shown.length>0&&<tfoot><tr style={{fontWeight:700,borderTop:"2px solid #DDE3E8"}}>
+        <td colSpan="2">รวม {shown.length===rows.length?rows.length+" โครงการ":shown.length+" / "+rows.length+" โครงการ"}</td>
+        <td className="right">{fmtMoney(shown.reduce((s,r)=>s+r.budget,0))}</td>
+        <td className="right">{fmtMoney(shown.reduce((s,r)=>s+r.purchase,0))}</td>
+        <td className="right">{fmtMoney(shown.reduce((s,r)=>s+r.actual,0))}</td>
+        <td className="right">{fmtMoney(shown.reduce((s,r)=>s+r.balance,0))}</td>
         <td></td>
       </tr></tfoot>}
       </table>
+      {shown.length>300&&<p className="muted" style={{fontSize:12,marginTop:8}}>
+        แสดง 300 แถวแรกจาก {shown.length} — ใช้ช่องค้นหา หรือกด Export เพื่อดูทั้งหมด</p>}
+      <p className="muted" style={{fontSize:11.5,marginTop:10}}>
+        <b>Actual (ALL)</b> = Actual Cost (A/C) + Unbook · <b>Balance</b> = Budget − Actual (ALL) ·
+        ตัวเลขทั้งหมดมาจาก ERP โดยตรง (snapshot ณ วันที่ export)
+      </p>
     </div>
+    </>)}
   </Shell>);
 }
