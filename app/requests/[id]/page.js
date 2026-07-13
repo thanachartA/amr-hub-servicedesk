@@ -13,7 +13,7 @@ export default function RequestDetail(){
   const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
   const [atts,setAtts]=useState([]); const [upBusy,setUpBusy]=useState(false); const [thumbs,setThumbs]=useState({});
   const load=useCallback(async()=>{
-    const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours),requester:requester_id(full_name),assignee:assignee_id(full_name)").eq("id",id).single();
+    const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours),requester:requester_id(full_name),assignee:assignee_id(full_name),suggested:suggested_assignee_id(full_name)").eq("id",id).single();
     setR(req); setAssignee(req?.assignee_id||"");
     const { data:e }=await supabase.from("hub_expense_entries").select("*,projects(code,name,budget_amount),hub_cost_codes(code,name)").eq("request_id",id);
     setExp(e||[]);
@@ -42,11 +42,14 @@ export default function RequestDetail(){
     await supabase.from("hub_activity_log").insert({request_id:id,actor_id:uid,action,from_status:from,to_status:changes.status||from,note:note||null});
     setMsg("อัปเดตแล้ว"); load();
   }
-  async function doAssign(){
-    await act("assign",{assignee_id:assignee,status:"assigned",assigned_at:new Date().toISOString()},"มอบหมายงาน");
-    supabase.from("hub_assignments").insert({request_id:id,assignee_id:assignee,assigned_by:uid,is_current:true});
-    notify(assignee,"ได้รับมอบหมายงานใหม่",tk+" · "+ttl,link,id);
+  async function assignTo(target,note){
+    if(!target) return;
+    await act("assign",{assignee_id:target,status:"assigned",assigned_at:new Date().toISOString()},note||"มอบหมายงาน");
+    supabase.from("hub_assignments").insert({request_id:id,assignee_id:target,assigned_by:uid,is_current:true});
+    notify(target,"ได้รับมอบหมายงานใหม่",tk+" · "+ttl,link,id);
   }
+  async function doAssign(){ await assignTo(assignee); }
+  async function doAssignSuggested(){ await assignTo(r.suggested_assignee_id,"มอบหมายตามคำแนะนำระบบ"); }
   async function doStart(){ const ch={status:"in_progress"}; if(!r.started_at) ch.started_at=new Date().toISOString(); await act("start",ch); }
   async function doWaiting(){ await act("waiting",{status:"waiting"},"รอข้อมูล"); }
   async function doSubmit(){
@@ -167,6 +170,17 @@ export default function RequestDetail(){
         <div className="card"><h2>การดำเนินการ</h2>
           {!staff&&<div className="muted">เฉพาะทีม Hub เท่านั้นที่จัดการได้</div>}
           {staff&&<>
+            {canAssign&&!r.assignee_id&&(r.suggested_assignee_id
+              ? <div style={{background:"#EEF4FF",border:"1px solid #C7D9F7",borderRadius:10,padding:"10px 12px",marginBottom:12}}>
+                  <div style={{fontSize:12,color:"#2D6CDF",fontWeight:700,marginBottom:2}}>🤖 ระบบแนะนำ</div>
+                  <div style={{fontSize:14,fontWeight:700,color:"#202028"}}>{r.suggested?.full_name}</div>
+                  <div className="muted" style={{fontSize:11,marginTop:2}}>{r.suggested_reason}</div>
+                  <button className="btn sm" style={{width:"100%",marginTop:8}} onClick={doAssignSuggested}>✓ มอบหมายตามคำแนะนำ</button>
+                </div>
+              : <div style={{background:"#FBF1DE",border:"1px solid #EBD9AE",borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:12.5,color:"#9A5B00"}}>
+                  ⚠ ระบบไม่มีคำแนะนำสำหรับงานนี้ (ยังไม่ตั้งเจ้าประจำ หรือเจ้าประจำ/ตัวสำรองลา) — กรุณาเลือกผู้รับผิดชอบเอง
+                </div>)}
+
             {canAssign&&<>
               <div className="field"><label>มอบหมายให้</label>
                 <select value={assignee} onChange={e=>setAssignee(e.target.value)}>
