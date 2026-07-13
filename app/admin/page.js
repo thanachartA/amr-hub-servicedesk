@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import Shell from "../../components/Shell";
 import { supabase } from "../../lib/supabaseClient";
 import { downloadCSV, parseCSV } from "../../components/util";
+import FormBuilder from "../../components/FormBuilder";
+import DynForm from "../../components/DynForm";
 
 const MODE_TH={skill:"เจ้าประจำ (Skill)",load:"กระจายตามโหลด (Load)",round_robin:"วนคิว (Round-robin)"};
 
@@ -12,13 +14,15 @@ export default function Admin(){
   const [types,setTypes]=useState([]); const [staff,setStaff]=useState([]);
   const [projects,setProjects]=useState([]); const [pq,setPq]=useState(""); const [onlyUnset,setOnlyUnset]=useState(false);
   const [impBusy,setImpBusy]=useState(false); const [impResult,setImpResult]=useState(null);
+  // Form Builder
+  const [editId,setEditId]=useState(null); const [draft,setDraft]=useState(null); const [prev,setPrev]=useState({}); const [saving,setSaving]=useState(false);
   async function load(){
     const { data:prof }=await supabase.from("profiles").select("id,full_name,email,department,position,employee_id,role").order("full_name").limit(2000);
     const { data:t }=await supabase.from("hub_team").select("user_id,hub_role,is_available,profiles:user_id(id,full_name,email)");
     const map={}; (t||[]).forEach(x=>map[x.user_id]=x.hub_role);
     setRows(prof||[]); setTeam(map);
     setStaff((t||[]).filter(x=>x.profiles).map(x=>({id:x.profiles.id,name:x.profiles.full_name,email:x.profiles.email,role:x.hub_role,avail:x.is_available})));
-    const { data:rt }=await supabase.from("hub_request_types").select("id,name,category,routing_mode,primary_owner_id,backup_owner_id,default_sla_hours").eq("is_active",true).order("sort_order");
+    const { data:rt }=await supabase.from("hub_request_types").select("id,name,category,routing_mode,primary_owner_id,backup_owner_id,default_sla_hours,form_schema,require_attachment,prep_note").eq("is_active",true).order("sort_order");
     setTypes(rt||[]);
     const { data:pj }=await supabase.from("projects").select("id,code,name,hub_owner_id,hub_backup_owner_id").order("code").limit(500);
     setProjects(pj||[]);
@@ -77,6 +81,51 @@ export default function Admin(){
       setMsg("อ่านไฟล์ไม่สำเร็จ: "+err.message);
     }
     setImpBusy(false); e.target.value="";
+  }
+
+  // ===== Form Builder: เปิด / บันทึก =====
+  function openBuilder(t){
+    setEditId(t.id); setPrev({}); setMsg(null);
+    setDraft({
+      schema: Array.isArray(t.form_schema)? JSON.parse(JSON.stringify(t.form_schema)) : [],
+      require_attachment: !!t.require_attachment,
+      prep_note: t.prep_note || "",
+    });
+  }
+  async function saveBuilder(){
+    if(!draft) return;
+    // ตรวจก่อนบันทึก
+    const errs=[];
+    const keys=new Set();
+    draft.schema.forEach((f,i)=>{
+      if(!String(f.label||"").trim()) errs.push("ช่องที่ "+(i+1)+": ยังไม่ได้ตั้งชื่อ");
+      if(!String(f.key||"").trim()) errs.push("ช่องที่ "+(i+1)+": ไม่มีรหัสช่อง (key)");
+      else if(keys.has(f.key)) errs.push("รหัสช่องซ้ำ: "+f.key); else keys.add(f.key);
+      if(f.type==="select" && !(f.options||[]).length) errs.push('"'+f.label+'": เป็น dropdown แต่ยังไม่มีตัวเลือก');
+      if(f.show_if?.field && !draft.schema.some(x=>x.key===f.show_if.field)) errs.push('"'+f.label+'": เงื่อนไขอ้างช่องที่ถูกลบไปแล้ว');
+    });
+    if(errs.length){ setMsg("บันทึกไม่ได้ — "+errs.join(" · ")); return; }
+
+    setSaving(true);
+    const clean=draft.schema.map(f=>{
+      const o={ key:f.key, label:f.label, type:f.type||"text" };
+      if(f.required) o.required=true;
+      if(f.type==="select") o.options=f.options||[];
+      if(f.placeholder) o.placeholder=f.placeholder;
+      if(f.help) o.help=f.help;
+      if(f.show_if?.field) o.show_if={ field:f.show_if.field, equals:f.show_if.equals };
+      return o;
+    });
+    const { error }=await supabase.from("hub_request_types").update({
+      form_schema: clean,
+      require_attachment: draft.require_attachment,
+      prep_note: draft.prep_note.trim() || null,
+    }).eq("id",editId);
+    setSaving(false);
+    if(error){ setMsg("ผิดพลาด: "+error.message); return; }
+    setMsg("บันทึกฟอร์มแล้ว — มีผลกับคำขอใหม่ทันที");
+    setEditId(null); setDraft(null);
+    load();
   }
 
   async function setProjOwner(projId, field, value){
@@ -156,6 +205,70 @@ export default function Admin(){
         </select></td>
       </tr>))}
         {!types.length&&<tr><td colSpan="4" className="muted">ไม่มีประเภทงาน</td></tr>}</tbody></table>
+    </div>
+
+    <div className="card">
+      <h2>📝 ช่องกรอกของแต่ละประเภทงาน (Form Builder)</h2>
+      <p className="muted" style={{marginBottom:12,fontSize:12.5}}>
+        กำหนดว่า <b>user ต้องกรอกอะไรบ้าง</b> ตอนเปิดคำขอ — ช่องที่ตั้งเป็น "บังคับกรอก" จะทำให้ user <b>กดส่งไม่ได้</b> ถ้าไม่ครบ<br/>
+        แก้แล้วมีผลกับ <b>คำขอใหม่ทันที</b> (ไม่ต้อง deploy) · คำขอเก่ายังเก็บข้อมูลเดิมไว้ครบ
+      </p>
+
+      <table><thead><tr><th>ประเภทงาน</th><th className="right">จำนวนช่อง</th><th>บังคับแนบไฟล์</th><th></th></tr></thead>
+      <tbody>{types.map(t=>(<tr key={t.id}>
+        <td><b>{t.name}</b></td>
+        <td className="right">{(t.form_schema||[]).length} ช่อง
+          <span className="muted" style={{fontSize:11}}> ({(t.form_schema||[]).filter(f=>f.required).length} บังคับ)</span></td>
+        <td>{t.require_attachment
+          ? <span className="badge b-closed">ต้องแนบ</span>
+          : <span className="muted" style={{fontSize:12}}>ไม่บังคับ</span>}</td>
+        <td className="right">
+          <button className="btn sm" onClick={()=>openBuilder(t)} disabled={editId===t.id}>
+            {editId===t.id?"กำลังแก้ไข…":"แก้ไขฟอร์ม"}
+          </button></td>
+      </tr>))}</tbody></table>
+
+      {editId&&draft&&(()=>{ const t=types.find(x=>x.id===editId); return (
+        <div style={{marginTop:16,border:"2px solid #2D6CDF",borderRadius:12,overflow:"hidden"}}>
+          <div style={{background:"#EEF4FF",padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <b style={{color:"#2D6CDF"}}>แก้ไขฟอร์ม: {t?.name}</b>
+            <div style={{display:"flex",gap:8}}>
+              <button className="btn sm sec" onClick={()=>{setEditId(null);setDraft(null);setMsg(null);}}>ยกเลิก</button>
+              <button className="btn sm" onClick={saveBuilder} disabled={saving}>{saving?"กำลังบันทึก…":"💾 บันทึกฟอร์ม"}</button>
+            </div>
+          </div>
+
+          <div style={{padding:14,display:"grid",gridTemplateColumns:"1.15fr 0.85fr",gap:16}}>
+            <div>
+              <div className="field">
+                <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontWeight:400,color:"#20232A"}}>
+                  <input type="checkbox" checked={draft.require_attachment}
+                    onChange={e=>setDraft({...draft,require_attachment:e.target.checked})} style={{width:"auto",margin:0}}/>
+                  <b>บังคับแนบไฟล์</b> — ไม่แนบเอกสาร กดส่งไม่ได้ (ใช้กับงานที่ต้องมีบิล/ใบเสร็จ/ใบเสนอราคา)
+                </label>
+              </div>
+              <div className="field">
+                <label>ข้อความ “เตรียมให้พร้อมก่อนกรอก” (โผล่บนสุดของฟอร์ม)</label>
+                <textarea value={draft.prep_note} onChange={e=>setDraft({...draft,prep_note:e.target.value})}
+                  placeholder="เช่น เตรียม: บิล/ใบเสร็จตัวจริง · ใบกำกับภาษี (ถ้ามี) · เลขผู้เสียภาษีของผู้ขาย"/>
+              </div>
+              <div style={{fontWeight:700,fontSize:13,margin:"14px 0 8px"}}>ช่องกรอก ({draft.schema.length})</div>
+              <FormBuilder schema={draft.schema} onChange={s=>setDraft({...draft,schema:s})}/>
+            </div>
+
+            <div>
+              <div style={{fontWeight:700,fontSize:13,marginBottom:8}}>👁 พรีวิว — สิ่งที่ user จะเห็น</div>
+              {draft.prep_note&&<div style={{background:"#FFF8E6",border:"1px solid #EBD9AE",borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:12,color:"#8A5A00",lineHeight:1.7}}>
+                <b>📋 เตรียมให้พร้อมก่อนกรอก</b><br/>{draft.prep_note}
+              </div>}
+              <DynForm schema={draft.schema} data={prev} onChange={setPrev}/>
+              {draft.require_attachment&&<div className="muted" style={{fontSize:11.5,color:"#B03A2E"}}>📎 แนบไฟล์ * บังคับ</div>}
+              <div className="muted" style={{fontSize:11,marginTop:10,lineHeight:1.7}}>
+                ลองกรอก/ติ๊กในพรีวิวได้เลย — ช่องที่มีเงื่อนไขจะโผล่/หายให้เห็นจริง
+              </div>
+            </div>
+          </div>
+        </div>); })()}
     </div>
 
     <div className="card">
