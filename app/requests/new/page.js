@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
 import { notifyMany, uploadAttachments, fmtSize, fileIcon } from "../../../components/util";
+import DynForm, { missingFields } from "../../../components/DynForm";
 
 const THRESHOLD=100000;
 const CAT={ finance:{label:"💰 การเงิน & เบิกจ่าย",order:1}, procurement:{label:"🛒 จัดซื้อ & Vendor",order:2}, ga:{label:"🏢 ธุรการ & ยานพาหนะ",order:3} };
@@ -21,6 +22,7 @@ export default function NewRequest(){
   const [form,setForm]=useState({type:"",title:"",detail:"",priority:"normal",due:"",project:"",cost:"",amount:""});
   const [err,setErr]=useState(null); const [busy,setBusy]=useState(false);
   const [files,setFiles]=useState([]);
+  const [fd,setFd]=useState({});
   useEffect(()=>{ (async()=>{
     const [t,p,c]=await Promise.all([
       supabase.from("hub_request_types").select("*").eq("is_active",true).order("sort_order"),
@@ -30,13 +32,21 @@ export default function NewRequest(){
   })(); },[]);
   const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
   function up(k,v){ setForm(s=>({...s,[k]:v})); }
-  async function submit(e){ e.preventDefault(); setBusy(true); setErr(null);
+  async function submit(e){ e.preventDefault(); setErr(null);
+    // ⛔ บังคับกรอกให้ครบก่อนส่ง
+    const miss=missingFields(sel?.form_schema, fd);
+    if(miss.length){ setErr("กรอกข้อมูลไม่ครบ — ยังขาด: "+miss.join(" · ")); window.scrollTo({top:0,behavior:"smooth"}); return; }
+    if(sel?.require_attachment && files.length===0){
+      setErr("งานประเภทนี้ต้องแนบเอกสารหลักฐาน (เช่น บิล/ใบเสร็จ/ใบเสนอราคา) อย่างน้อย 1 ไฟล์");
+      window.scrollTo({top:0,behavior:"smooth"}); return;
+    }
+    setBusy(true);
     const { data:sess }=await supabase.auth.getSession(); const uid=sess.session.user.id;
     const sla=new Date(Date.now()+(Number(sel?.default_sla_hours||24))*3600e3).toISOString();
     const { data:req, error }=await supabase.from("hub_requests").insert({
       requester_id:uid, request_type_id:form.type, title:form.title, detail:form.detail,
       priority:form.priority, requested_due:form.due||null, sla_due_at:sla, status:"new",
-      project_id: form.project||null
+      project_id: form.project||null, form_data: fd
     }).select().single();
     if(error){ setErr(error.message); setBusy(false); return; }
     if(needExpense && form.amount){
@@ -68,8 +78,15 @@ export default function NewRequest(){
               </optgroup>
             ))}
           </select></div>
-        <div className="field"><label>หัวข้อ *</label><input value={form.title} onChange={e=>up("title",e.target.value)} required/></div>
-        <div className="field"><label>รายละเอียด</label><textarea value={form.detail} onChange={e=>up("detail",e.target.value)}/></div>
+        {sel?.prep_note&&<div style={{background:"#FFF8E6",border:"1px solid #EBD9AE",borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:12.5,color:"#8A5A00",lineHeight:1.7}}>
+          <b>📋 เตรียมให้พร้อมก่อนกรอก</b><br/>{sel.prep_note}
+        </div>}
+
+        <div className="field"><label>หัวข้อ *</label><input value={form.title} onChange={e=>up("title",e.target.value)} required placeholder="สรุปสั้น ๆ ว่าต้องการอะไร"/></div>
+
+        {sel&&<DynForm schema={sel.form_schema} data={fd} onChange={setFd}/>}
+
+        <div className="field"><label>หมายเหตุเพิ่มเติม (ถ้ามี)</label><textarea value={form.detail} onChange={e=>up("detail",e.target.value)} placeholder="ข้อมูลอื่นที่อยากให้ทีมทราบ"/></div>
         <div className="row2">
           <div className="field"><label>ความเร่งด่วน</label>
             <select value={form.priority} onChange={e=>up("priority",e.target.value)}>
@@ -96,7 +113,7 @@ export default function NewRequest(){
           {Number(form.amount)>THRESHOLD&&<div className="muted" style={{color:"#B26A00"}}>⚠ ยอด &gt; 100,000 — ต้องขออนุมัติเพิ่มก่อนตัดยอด</div>}
         </div>)}
         <div className="field">
-          <label>แนบไฟล์ (ใบเสร็จ / สลิป / รูปถ่าย / เอกสาร)</label>
+          <label>แนบไฟล์ (ใบเสร็จ / สลิป / รูปถ่าย / เอกสาร){sel?.require_attachment&&<span style={{color:"#B03A2E"}}> * บังคับ</span>}</label>
           <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv"
             onChange={e=>setFiles([...e.target.files])}
             style={{padding:"7px 9px",background:"#fff"}}/>
