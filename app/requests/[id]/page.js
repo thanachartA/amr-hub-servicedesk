@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
 import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, deleteAttachment, signedUrls, isImage, fmtSize, fileIcon } from "../../../components/util";
+import { DynView } from "../../../components/DynForm";
 
 export default function RequestDetail(){
   const { id }=useParams();
@@ -13,7 +14,7 @@ export default function RequestDetail(){
   const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
   const [atts,setAtts]=useState([]); const [upBusy,setUpBusy]=useState(false); const [thumbs,setThumbs]=useState({});
   const load=useCallback(async()=>{
-    const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours),requester:requester_id(full_name),assignee:assignee_id(full_name),suggested:suggested_assignee_id(full_name),project:project_id(code,name)").eq("id",id).single();
+    const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours,form_schema),requester:requester_id(full_name),assignee:assignee_id(full_name),suggested:suggested_assignee_id(full_name),project:project_id(code,name)").eq("id",id).single();
     setR(req); setAssignee(req?.assignee_id||"");
     const { data:e }=await supabase.from("hub_expense_entries").select("*,projects(code,name,budget_amount),hub_cost_codes(code,name)").eq("request_id",id);
     setExp(e||[]);
@@ -105,6 +106,11 @@ export default function RequestDetail(){
             {r.sla_due_at&&new Date(r.sla_due_at)<now&&!["review","closed","cancelled"].includes(r.status)&&<b style={{color:"#B03A2E"}}> · เกิน SLA</b>}</div>
           {r.review_note&&["in_progress","assigned","waiting"].includes(r.status)&&r.rework_count>0&&
             <div style={{marginTop:8,padding:"8px 10px",background:"#FBF1DE",borderRadius:6,fontSize:13,color:"#9A5B00"}}>ตีกลับให้แก้: {r.review_note}</div>}
+        </div>
+
+        <div className="card">
+          <h2>📋 ข้อมูลสำหรับดำเนินการ</h2>
+          <DynView schema={r.hub_request_types?.form_schema} data={r.form_data||{}}/>
         </div>
 
         <div className="card">
