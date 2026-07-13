@@ -35,7 +35,8 @@ export default function NewRequest(){
     const sla=new Date(Date.now()+(Number(sel?.default_sla_hours||24))*3600e3).toISOString();
     const { data:req, error }=await supabase.from("hub_requests").insert({
       requester_id:uid, request_type_id:form.type, title:form.title, detail:form.detail,
-      priority:form.priority, requested_due:form.due||null, sla_due_at:sla, status:"new"
+      priority:form.priority, requested_due:form.due||null, sla_due_at:sla, status:"new",
+      project_id: form.project||null
     }).select().single();
     if(error){ setErr(error.message); setBusy(false); return; }
     if(needExpense && form.amount){
@@ -75,17 +76,23 @@ export default function NewRequest(){
               <option value="low">ต่ำ</option><option value="normal">ปกติ</option><option value="high">สูง</option><option value="urgent">ด่วนมาก</option></select></div>
           <div className="field"><label>กำหนดส่งที่ต้องการ</label><input type="date" value={form.due} onChange={e=>up("due",e.target.value)}/></div>
         </div>
+        <div className="field">
+          <label>โครงการ / รหัสโครงการ {needExpense&&<span style={{color:"#B03A2E"}}>*</span>}</label>
+          <select value={form.project} onChange={e=>up("project",e.target.value)} required={!!needExpense}>
+            <option value="">— ไม่ระบุโครงการ —</option>
+            {projects.map(p=>(<option key={p.id} value={p.id}>{p.code} · {p.name}</option>))}
+          </select>
+          <div className="muted" style={{fontSize:11,marginTop:4}}>ระบุโครงการ = ระบบจะส่งงานให้ <b>เจ้าประจำโครงการ</b> นั้นโดยตรง (แม่นกว่าเดาจากประเภทงาน)</div>
+        </div>
+
         {needExpense&&(<div style={{background:"#E4F3EA",border:"1px solid #B7DEC8",borderRadius:10,padding:14,marginBottom:14}}>
           <div style={{fontWeight:700,color:"#2E7D5B",marginBottom:10}}>ค่าใช้จ่ายโครงการ</div>
           <div className="row2">
-            <div className="field"><label>โครงการ</label>
-              <select value={form.project} onChange={e=>up("project",e.target.value)}>
-                <option value="">— เลือกโครงการ —</option>{projects.map(p=>(<option key={p.id} value={p.id}>{p.code} · {p.name}</option>))}</select></div>
             <div className="field"><label>Cost Code</label>
               <select value={form.cost} onChange={e=>up("cost",e.target.value)}>
                 <option value="">— เลือก —</option>{codes.map(c=>(<option key={c.id} value={c.id}>{c.code} · {c.name}</option>))}</select></div>
+            <div className="field"><label>จำนวนเงิน (บาท)</label><input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0"/></div>
           </div>
-          <div className="field"><label>จำนวนเงิน (บาท)</label><input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0"/></div>
           {Number(form.amount)>THRESHOLD&&<div className="muted" style={{color:"#B26A00"}}>⚠ ยอด &gt; 100,000 — ต้องขออนุมัติเพิ่มก่อนตัดยอด</div>}
         </div>)}
         <div className="field">
