@@ -16,6 +16,67 @@ export default function Admin(){
   const [impBusy,setImpBusy]=useState(false); const [impResult,setImpResult]=useState(null);
   // Form Builder
   const [editId,setEditId]=useState(null); const [draft,setDraft]=useState(null); const [prev,setPrev]=useState({}); const [saving,setSaving]=useState(false);
+  // นำเข้ารายชื่อพนักงาน (CSV)
+  const [empBusy,setEmpBusy]=useState(false); const [empResult,setEmpResult]=useState(null);
+  function empTemplate(){
+    downloadCSV("employee_template.csv",
+      [{key:"employee_id",label:"employee_id"},{key:"full_name",label:"full_name"},{key:"email",label:"email"},
+       {key:"department",label:"department"},{key:"position",label:"position"}],
+      [{employee_id:"T1234",full_name:"สมชาย ใจดี",email:"somchai@amrasia.com",department:"Accounting",position:"Officer"}]);
+  }
+  function empExport(){
+    downloadCSV("employees_"+new Date().toISOString().slice(0,10)+".csv",
+      [{key:"employee_id",label:"employee_id"},{key:"full_name",label:"full_name"},{key:"email",label:"email"},
+       {key:"department",label:"department"},{key:"position",label:"position"}], rows);
+  }
+  async function empImport(e){
+    const file=e.target.files?.[0]; e.target.value="";
+    if(!file) return;
+    setEmpBusy(true); setEmpResult(null); setMsg(null);
+    try{
+      const grid=parseCSV(await file.text());
+      if(grid.length<2){ setEmpResult({errors:["ไฟล์ว่าง หรือมีแต่หัวตาราง"]}); setEmpBusy(false); return; }
+      const head=grid[0].map(h=>String(h||"").trim().toLowerCase());
+      const col=n=>head.indexOf(n);
+      const iEmail=col("email"), iName=col("full_name")>=0?col("full_name"):col("name");
+      if(iEmail<0||iName<0){ setEmpResult({errors:["ไม่พบคอลัมน์ email หรือ full_name — โหลดเทมเพลตไปใช้ก่อน"]}); setEmpBusy(false); return; }
+      const iEmp=col("employee_id"), iDept=col("department"), iPos=col("position");
+
+      const { data:exist }=await supabase.from("profiles").select("id,email").limit(5000);
+      const byEmail={}; (exist||[]).forEach(p=>{ if(p.email) byEmail[p.email.trim().toLowerCase()]=p.id; });
+
+      const errors=[]; const seen={}; const ins=[]; const upd=[];
+      for(let r=1;r<grid.length;r++){
+        const row=grid[r];
+        const email=String(row[iEmail]||"").trim().toLowerCase();
+        const name=String(row[iName]||"").trim();
+        if(!email&&!name) continue;
+        if(!email||!name){ errors.push("แถว "+(r+1)+": ต้องมีทั้ง full_name และ email"); continue; }
+        if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ errors.push("แถว "+(r+1)+": อีเมลไม่ถูกต้อง ("+email+")"); continue; }
+        if(seen[email]){ errors.push("แถว "+(r+1)+": อีเมลซ้ำในไฟล์ ("+email+")"); continue; }
+        seen[email]=1;
+        const rec={ email, full_name:name,
+          employee_id: iEmp>=0 ? (String(row[iEmp]||"").trim()||null) : null,
+          department:  iDept>=0 ? (String(row[iDept]||"").trim()||null) : null,
+          position:    iPos>=0 ? (String(row[iPos]||"").trim()||null) : null };
+        if(byEmail[email]) upd.push({ id:byEmail[email], ...rec });
+        else ins.push({ id:crypto.randomUUID(), ...rec, role:"employee", is_active:true });
+      }
+
+      let added=0, updated=0;
+      for(let i=0;i<ins.length;i+=200){
+        const { error }=await supabase.from("profiles").insert(ins.slice(i,i+200));
+        if(error) errors.push("เพิ่มไม่สำเร็จ: "+error.message); else added+=Math.min(200,ins.length-i);
+      }
+      for(let i=0;i<upd.length;i+=200){
+        const { error }=await supabase.from("profiles").upsert(upd.slice(i,i+200),{onConflict:"id"});
+        if(error) errors.push("อัปเดตไม่สำเร็จ: "+error.message); else updated+=Math.min(200,upd.length-i);
+      }
+      setEmpResult({ added, updated, errors });
+      await load();
+    }catch(ex){ setEmpResult({errors:["อ่านไฟล์ไม่สำเร็จ: "+ex.message]}); }
+    setEmpBusy(false);
+  }
   // Reset password (โดย Admin — ไม่ต้องยิงเมล)
   const [pwBusy,setPwBusy]=useState(null); const [pwResult,setPwResult]=useState(null); const [copied,setCopied]=useState(false);
   async function resetPassword(u){
@@ -343,6 +404,34 @@ export default function Admin(){
         </tr>))}
           {!shownProjects.length&&<tr><td colSpan="4" className="muted">ไม่พบโครงการ</td></tr>}</tbody></table>
       </div>
+    </div>
+
+    <div className="card">
+      <h2>👥 นำเข้ารายชื่อพนักงาน (CSV)</h2>
+      <p className="muted" style={{fontSize:12.5,lineHeight:1.8,marginTop:-4}}>
+        อัปโหลดรายชื่อ + อีเมลพนักงาน เพื่อให้พวกเขา <b>ตั้งรหัสผ่านครั้งแรก</b> แล้วเข้ามาเปิดคำขอได้<br/>
+        คอลัมน์ที่รองรับ: <span className="mono">employee_id, full_name, email, department, position</span>
+        &nbsp;(บังคับเฉพาะ <b>full_name</b> กับ <b>email</b>)<br/>
+        อีเมลที่<b>มีอยู่แล้วจะถูกอัปเดตทับ</b> · ไม่กระทบสิทธิ์ใน Hub ของใครทั้งสิ้น
+      </p>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginTop:12}}>
+        <button type="button" className="btn sm sec" onClick={empTemplate}>⬇ โหลดเทมเพลต CSV</button>
+        <button type="button" className="btn sm sec" onClick={empExport}>⬇ Export รายชื่อปัจจุบัน ({rows.length})</button>
+        <label className="btn sm" style={{cursor:"pointer",margin:0}}>
+          {empBusy?"กำลังนำเข้า…":"⬆ อัปโหลดรายชื่อพนักงาน"}
+          <input type="file" accept=".csv,text/csv" onChange={empImport} disabled={empBusy} style={{display:"none"}}/>
+        </label>
+      </div>
+      {empResult&&(<div style={{marginTop:12,background:"#F8FAFC",border:"1px solid #E4E7EB",borderRadius:8,padding:"10px 12px",fontSize:12.5,lineHeight:1.8}}>
+        {(empResult.added>0||empResult.updated>0)&&<div>
+          ✅ เพิ่มใหม่ <b>{empResult.added||0}</b> คน · อัปเดต <b>{empResult.updated||0}</b> คน
+        </div>}
+        {empResult.errors?.length>0&&<div style={{color:"#B03A2E",marginTop:4}}>
+          ⚠️ ข้าม/ผิดพลาด {empResult.errors.length} รายการ:
+          <ul style={{margin:"4px 0 0 18px"}}>{empResult.errors.slice(0,10).map((e,i)=>(<li key={i}>{e}</li>))}</ul>
+          {empResult.errors.length>10&&<div className="muted">…และอีก {empResult.errors.length-10} รายการ</div>}
+        </div>}
+      </div>)}
     </div>
 
     <div className="card">
