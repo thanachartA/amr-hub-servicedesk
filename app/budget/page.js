@@ -241,7 +241,7 @@ export default function Budget(){
         if(!d){ errors.push("แถว "+rowNo+": ไม่ระบุฝ่าย"); continue; }
         if(isNaN(amt)){ errors.push("แถว "+rowNo+": จำนวนเงินไม่ใช่ตัวเลข ("+g("amount")+")"); continue; }
         if(kind==="actual" && amt===0){ zeroSkipped++; continue; }
-        const dd=toDate(g("doc_date"));
+        const dd=toDate(ix.doc_date>=0 ? row[ix.doc_date] : "");  // ส่งค่าดิบ (Date object) ไม่แปลงเป็น string ก่อน
         const per=toPeriod(g("period"), dd);
         if(!per){ errors.push("แถว "+rowNo+": ระบุงวดไม่ได้ (ใส่ period เช่น 2026-07 หรือ doc_date)"); continue; }
 
