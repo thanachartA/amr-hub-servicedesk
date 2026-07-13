@@ -43,6 +43,28 @@ export async function uploadAttachments(requestId, uid, files){
   }
   return errs;
 }
+export const isImage = m => (m||"").startsWith("image/");
+
+// ขอ signed URL หลายไฟล์พร้อมกัน (ใช้ทำ thumbnail รูป) — คืน map {path: url}
+export async function signedUrls(paths, secs=600){
+  const map={};
+  const list=[...new Set((paths||[]).filter(Boolean))];
+  if(!list.length) return map;
+  try{
+    const { data }=await supabase.storage.from(ATT_BUCKET).createSignedUrls(list, secs);
+    (data||[]).forEach(d=>{ if(d && d.signedUrl && !d.error) map[d.path]=d.signedUrl; });
+  }catch(e){ /* noop */ }
+  return map;
+}
+
+// ลบไฟล์แนบ (ลบทั้งใน storage และแถวใน DB) — คืนข้อความ error ถ้ามี
+export async function deleteAttachment(att){
+  if(!att?.id) return "ไม่พบไฟล์";
+  if(att.file_path) await supabase.storage.from(ATT_BUCKET).remove([att.file_path]);
+  const { error }=await supabase.from("hub_attachments").delete().eq("id",att.id);
+  return error ? error.message : null;
+}
+
 // เปิดไฟล์ด้วย signed URL (ไฟล์เป็น private)
 export async function openAttachment(path){
   const { data, error }=await supabase.storage.from(ATT_BUCKET).createSignedUrl(path,120);
