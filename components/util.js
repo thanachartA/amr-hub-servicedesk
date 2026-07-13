@@ -138,7 +138,8 @@ export async function readSheetAt(file, { sheetName=null, mustHave=[] }={}){
       if(hit) sn=hit;
     }
     const ws=wb.Sheets[sn];
-    grid=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:""});
+    // raw:true → วันที่มาเป็น Date object (ไม่ต้องเดา D/M vs M/D), ตัวเลขมาเป็น number
+    grid=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:""});
   }
   grid=grid.filter(r=>Array.isArray(r)&&r.some(x=>String(x??"").trim()!==""));
   if(!mustHave.length) return { grid, headerRow:0 };
@@ -163,20 +164,27 @@ export function toNum(v){
   return neg?-n:n;
 }
 
-// แปลงวันที่จาก Excel/CSV -> YYYY-MM-DD (รองรับ d/m/yyyy และ พ.ศ.)
+// แปลงวันที่ -> YYYY-MM-DD
+// รองรับ: Date object (จาก Excel), 2026-07-01, d/m/yyyy (ไทย), m/d/yyyy (Excel/US), พ.ศ.
+const _ymd=dt=>[dt.getFullYear(),String(dt.getMonth()+1).padStart(2,"0"),String(dt.getDate()).padStart(2,"0")].join("-");
 export function toDate(v){
+  if(v instanceof Date && !isNaN(v)) return _ymd(v);   // ⭐ ไม่ใช้ toISOString (จะเพี้ยนเพราะ timezone)
   const s=String(v??"").trim();
   if(!s) return null;
   if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
   const m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
   if(m){
-    let [_,d,mo,y]=m; y=Number(y);
+    let a=Number(m[1]), b=Number(m[2]), y=Number(m[3]);
     if(y<100) y+=2000;
-    if(y>2400) y-=543;             // พ.ศ. -> ค.ศ.
+    if(y>2400) y-=543;                       // พ.ศ. -> ค.ศ.
+    let d,mo;
+    if(b>12 && a<=12){ mo=a; d=b; }          // 1/31/2026  = M/D/Y (Excel/US)
+    else { d=a; mo=b; }                      // 31/1/2026  = D/M/Y (ไทย)
+    if(mo<1||mo>12||d<1||d>31) return null;
     return [y,String(mo).padStart(2,"0"),String(d).padStart(2,"0")].join("-");
   }
   const dt=new Date(s);
-  return isNaN(dt) ? null : dt.toISOString().slice(0,10);
+  return isNaN(dt) ? null : _ymd(dt);
 }
 
 export function downloadCSV(filename, columns, rows){
