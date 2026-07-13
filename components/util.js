@@ -73,6 +73,27 @@ export async function openAttachment(path){
   return true;
 }
 
+// อ่านไฟล์ CSV -> array ของ array (รองรับ BOM, เครื่องหมายคำพูด, ขึ้นบรรทัดในเซลล์)
+export function parseCSV(text){
+  const t=String(text||"").replace(/^﻿/,"");
+  const rows=[]; let row=[]; let cur=""; let q=false;
+  for(let i=0;i<t.length;i++){
+    const c=t[i];
+    if(q){
+      if(c==='"'){ if(t[i+1]==='"'){ cur+='"'; i++; } else { q=false; } }
+      else cur+=c;
+    } else {
+      if(c==='"') q=true;
+      else if(c===','){ row.push(cur); cur=""; }
+      else if(c==='\n'){ row.push(cur); rows.push(row); row=[]; cur=""; }
+      else if(c==='\r'){ /* ข้าม */ }
+      else cur+=c;
+    }
+  }
+  if(cur!=="" || row.length){ row.push(cur); rows.push(row); }
+  return rows.filter(r=>r.some(x=>String(x).trim()!==""));
+}
+
 // export ตารางเป็น CSV (รองรับ Excel ภาษาไทยด้วย BOM)
 export function downloadCSV(filename, columns, rows){
   const esc=v=>{ const s=(v==null?"":String(v)); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
