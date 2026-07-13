@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Shell from "../../components/Shell";
 import { supabase } from "../../lib/supabaseClient";
+import { downloadCSV, parseCSV } from "../../components/util";
 
 const MODE_TH={skill:"เจ้าประจำ (Skill)",load:"กระจายตามโหลด (Load)",round_robin:"วนคิว (Round-robin)"};
 
@@ -10,17 +11,74 @@ export default function Admin(){
   const [rows,setRows]=useState([]); const [team,setTeam]=useState({}); const [q,setQ]=useState(""); const [msg,setMsg]=useState(null);
   const [types,setTypes]=useState([]); const [staff,setStaff]=useState([]);
   const [projects,setProjects]=useState([]); const [pq,setPq]=useState(""); const [onlyUnset,setOnlyUnset]=useState(false);
+  const [impBusy,setImpBusy]=useState(false); const [impResult,setImpResult]=useState(null);
   async function load(){
     const { data:prof }=await supabase.from("profiles").select("id,full_name,email,department,position,employee_id,role").order("full_name").limit(2000);
-    const { data:t }=await supabase.from("hub_team").select("user_id,hub_role,is_available,profiles:user_id(id,full_name)");
+    const { data:t }=await supabase.from("hub_team").select("user_id,hub_role,is_available,profiles:user_id(id,full_name,email)");
     const map={}; (t||[]).forEach(x=>map[x.user_id]=x.hub_role);
     setRows(prof||[]); setTeam(map);
-    setStaff((t||[]).filter(x=>x.profiles).map(x=>({id:x.profiles.id,name:x.profiles.full_name,role:x.hub_role,avail:x.is_available})));
+    setStaff((t||[]).filter(x=>x.profiles).map(x=>({id:x.profiles.id,name:x.profiles.full_name,email:x.profiles.email,role:x.hub_role,avail:x.is_available})));
     const { data:rt }=await supabase.from("hub_request_types").select("id,name,category,routing_mode,primary_owner_id,backup_owner_id,default_sla_hours").eq("is_active",true).order("sort_order");
     setTypes(rt||[]);
     const { data:pj }=await supabase.from("projects").select("id,code,name,hub_owner_id,hub_backup_owner_id").order("code").limit(500);
     setProjects(pj||[]);
   }
+  // ⬇ ดาวน์โหลดเทมเพลต: รหัส+ชื่อโครงการครบทุกแถว + เจ้าประจำปัจจุบัน (ถ้ามี)
+  function exportTemplate(){
+    const nameOf=id=>{ const s=staff.find(x=>x.id===id); return s?(s.email||s.name):""; };
+    downloadCSV("เจ้าประจำโครงการ_template.csv",[
+      {label:"รหัสโครงการ",key:"code"},
+      {label:"ชื่อโครงการ",key:"name"},
+      {label:"เจ้าประจำ (อีเมล หรือ ชื่อ-นามสกุล)",get:p=>nameOf(p.hub_owner_id)},
+      {label:"ตัวสำรอง (อีเมล หรือ ชื่อ-นามสกุล)",get:p=>nameOf(p.hub_backup_owner_id)},
+    ], projects);
+  }
+
+  // ⬆ อัปโหลดไฟล์: จับคู่โครงการด้วย "รหัส" และจับคู่คนด้วย "อีเมล" หรือ "ชื่อ"
+  async function importTemplate(e){
+    const file=e.target.files?.[0]; if(!file) return;
+    setImpBusy(true); setMsg(null); setImpResult(null);
+    try{
+      const rows=parseCSV(await file.text());
+      const byCode={}; projects.forEach(p=>{ byCode[String(p.code||"").trim().toLowerCase()]=p; });
+      const byPerson={};
+      staff.forEach(s=>{
+        if(s.email) byPerson[String(s.email).trim().toLowerCase()]=s.id;
+        if(s.name)  byPerson[String(s.name).trim().toLowerCase()]=s.id;
+      });
+      const resolve=v=>{ const k=String(v||"").trim().toLowerCase(); return k?byPerson[k]:undefined; };
+
+      let updated=0; const badProj=[]; const badPerson=[]; const updates=[];
+      rows.forEach((r,i)=>{
+        const code=String(r[0]||"").trim();
+        if(!code) return;
+        if(i===0 && /รหัส|code/i.test(code)) return; // ข้ามหัวตาราง
+        const p=byCode[code.toLowerCase()];
+        if(!p){ badProj.push(code); return; }
+        const oRaw=String(r[2]||"").trim(); const bRaw=String(r[3]||"").trim();
+        const patch={};
+        if(oRaw){ const id=resolve(oRaw); if(id) patch.hub_owner_id=id; else badPerson.push(oRaw); }
+        if(bRaw){ const id=resolve(bRaw); if(id) patch.hub_backup_owner_id=id; else badPerson.push(bRaw); }
+        if(Object.keys(patch).length) updates.push({id:p.id,patch});
+      });
+
+      for(const u of updates){
+        const { error }=await supabase.from("projects").update(u.patch).eq("id",u.id);
+        if(!error) updated++;
+      }
+      await load();
+      setImpResult({
+        updated,
+        skipped: rows.length-1-updates.length-badProj.length,
+        badProj:[...new Set(badProj)],
+        badPerson:[...new Set(badPerson)],
+      });
+    }catch(err){
+      setMsg("อ่านไฟล์ไม่สำเร็จ: "+err.message);
+    }
+    setImpBusy(false); e.target.value="";
+  }
+
   async function setProjOwner(projId, field, value){
     setMsg(null);
     const { error }=await supabase.from("projects").update({[field]: value||null}).eq("id",projId);
@@ -106,6 +164,30 @@ export default function Admin(){
         ถ้าคำขอระบุโครงการที่มีเจ้าประจำ → ระบบแนะนำ <b>คนของโครงการนั้น</b> ทันที (ไม่ต้องเดาจากประเภทงาน)<br/>
         ตั้งครบแล้ว <b>{nProjOwner}</b> / {projects.length} โครงการ
       </p>
+      <div style={{background:"#F6F7F9",border:"1px solid #E4E7EB",borderRadius:10,padding:12,marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:13,marginBottom:6}}>อัปเดตทีเดียวด้วยไฟล์ (แนะนำสำหรับ 77 โครงการ)</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <button className="btn sm sec" onClick={exportTemplate}>⬇ 1. ดาวน์โหลดเทมเพลต</button>
+          <span className="muted" style={{fontSize:12}}>→ เปิดใน Excel เติมชื่อ/อีเมล →</span>
+          <label className="btn sm" style={{cursor:"pointer",margin:0}}>
+            {impBusy?"กำลังอัปเดต…":"⬆ 2. อัปโหลดไฟล์ที่กรอกแล้ว"}
+            <input type="file" accept=".csv,text/csv" disabled={impBusy} onChange={importTemplate} style={{display:"none"}}/>
+          </label>
+        </div>
+        <div className="muted" style={{fontSize:11,marginTop:6,lineHeight:1.7}}>
+          ไฟล์มี 4 คอลัมน์: <b>รหัสโครงการ, ชื่อโครงการ, เจ้าประจำ, ตัวสำรอง</b> · ช่องคนกรอกได้ทั้ง <b>อีเมล</b> หรือ <b>ชื่อ-นามสกุล</b><br/>
+          ช่องที่<b>เว้นว่าง = ไม่เปลี่ยนแปลง</b> (ของเดิมยังอยู่) · อัปโหลดซ้ำกี่รอบก็ได้
+        </div>
+        {impResult&&<div style={{marginTop:10,padding:"8px 12px",borderRadius:8,fontSize:12.5,
+            background:(impResult.badProj.length||impResult.badPerson.length)?"#FBF1DE":"#E4F3EA",
+            border:"1px solid "+((impResult.badProj.length||impResult.badPerson.length)?"#EBD9AE":"#B7DEC8"),
+            color:(impResult.badProj.length||impResult.badPerson.length)?"#9A5B00":"#2E7D5B"}}>
+          ✓ อัปเดตสำเร็จ <b>{impResult.updated}</b> โครงการ
+          {impResult.badProj.length>0&&<div style={{marginTop:4}}>⚠ ไม่พบรหัสโครงการ ({impResult.badProj.length}): {impResult.badProj.slice(0,8).join(", ")}{impResult.badProj.length>8?" …":""}</div>}
+          {impResult.badPerson.length>0&&<div style={{marginTop:4}}>⚠ ไม่พบชื่อ/อีเมลคนนี้ในทีม Hub ({impResult.badPerson.length}): {impResult.badPerson.slice(0,8).join(", ")}{impResult.badPerson.length>8?" …":""}</div>}
+        </div>}
+      </div>
+
       <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
         <input value={pq} onChange={e=>setPq(e.target.value)} placeholder="ค้นหา รหัส / ชื่อโครงการ…"
           style={{maxWidth:300,padding:"9px 11px",border:"1px solid #E4E7EB",borderRadius:8,fontSize:13.5,fontFamily:"inherit"}}/>
