@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SB_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SB_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://kkbffgbotigddtfmultm.supabase.co"; // URL เป็นข้อมูลสาธารณะ ไม่ใช่ความลับ
 const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY; // server-only
 
 function genTempPassword(){
@@ -18,7 +18,7 @@ function genTempPassword(){
 
 export async function POST(req){
   if(!SERVICE || !SB_URL){
-    return Response.json({ error:"เซิร์ฟเวอร์ยังไม่ได้ตั้งค่า SUPABASE_SERVICE_ROLE_KEY บน Vercel" }, { status:500 });
+    return Response.json({ error:"เซิร์ฟเวอร์ยังไม่ได้ตั้งค่า SUPABASE_SERVICE_ROLE_KEY บน Vercel (ใส่แล้วต้องกด Redeploy ด้วย)" }, { status:500 });
   }
 
   const hdr = req.headers.get("authorization") || "";
