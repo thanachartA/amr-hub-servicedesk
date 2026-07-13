@@ -122,6 +122,36 @@ export async function readSheet(file){
   return grid.filter(r=>Array.isArray(r)&&r.some(x=>String(x??"").trim()!==""));
 }
 
+// อ่านไฟล์ + หาแถวหัวตารางเอง (ไฟล์จาก ERP มักมี logo/หัวรายงานอยู่ข้างบน)
+// sheetName: ระบุชื่อ sheet ที่ต้องการ (ถ้าไม่ใส่ = sheet แรก)
+export async function readSheetAt(file, { sheetName=null, mustHave=[] }={}){
+  const name=String(file?.name||"").toLowerCase();
+  let grid;
+  if(name.endsWith(".csv")||name.endsWith(".txt")){
+    grid=parseCSV(await file.text());
+  } else {
+    const XLSX=await loadXLSX();
+    const wb=XLSX.read(await file.arrayBuffer(),{type:"array",cellDates:true});
+    let sn=wb.SheetNames[0];
+    if(sheetName){
+      const hit=wb.SheetNames.find(s=>s.trim().toLowerCase()===sheetName.trim().toLowerCase());
+      if(hit) sn=hit;
+    }
+    const ws=wb.Sheets[sn];
+    grid=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:""});
+  }
+  grid=grid.filter(r=>Array.isArray(r)&&r.some(x=>String(x??"").trim()!==""));
+  if(!mustHave.length) return { grid, headerRow:0 };
+
+  const norm=s=>String(s??"").trim().toLowerCase().replace(/[\s\n\r]+/g,"_");
+  for(let i=0;i<Math.min(grid.length,25);i++){
+    const cells=grid[i].map(norm);
+    const hits=mustHave.filter(k=>cells.includes(k)).length;
+    if(hits>=Math.min(2,mustHave.length)) return { grid:grid.slice(i), headerRow:i };
+  }
+  return { grid, headerRow:0 };
+}
+
 // แปลงตัวเลขจาก Excel/CSV (รองรับ 1,234.50 / (1,234) = ติดลบ / ฿)
 export function toNum(v){
   let s=String(v??"").trim().replace(/[฿,\s]/g,"");
