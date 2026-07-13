@@ -2,19 +2,22 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
 import Shell from "../../components/Shell";
 import { supabase } from "../../lib/supabaseClient";
-import { fmtMoney, downloadCSV, readSheet, toNum, toDate } from "../../components/util";
+import { fmtMoney, downloadCSV, readSheetAt, toNum, toDate } from "../../components/util";
 
+// รองรับทั้งเทมเพลตของเรา และไฟล์ Raw GL จากบัญชีโดยตรง (dpt_name / ac_code / vchno / vchdate / Dr-Cr)
 const ALIAS={
-  department:["department","dept","ฝ่าย","แผนก","หน่วยงาน","cost_center","costcenter","ศูนย์ต้นทุน"],
-  period:["period","งวด","เดือน","month","yyyy-mm"],
-  cost_code:["cost_code","costcode","รหัสต้นทุน","account","account_code","หมวด","หมวดค่าใช้จ่าย"],
-  amount:["amount","จำนวนเงิน","งบประมาณ","budget","total","ยอดเงิน","value","debit"],
-  note:["note","หมายเหตุ","remark"],
-  doc_no:["doc_no","docno","document_no","เลขที่เอกสาร","voucher","voucher_no","ref","doc"],
+  department:["department","dept","dpt_name","dpt_code","ฝ่าย","แผนก","หน่วยงาน","cost_center","costcenter","ศูนย์ต้นทุน"],
+  period:["period","งวด","เดือน","month","yyyy-mm","glperiod"],
+  cost_code:["cost_code","costcode","ac_code","account_no","รหัสต้นทุน","account","account_code","หมวด","หมวดค่าใช้จ่าย"],
+  amount:["amount","dr-cr","จำนวนเงิน","งบประมาณ","budget","total","ยอดเงิน","value"],
+  amtdr:["amtdr","debit","เดบิต"],
+  amtcr:["amtcr","credit","เครดิต"],
+  note:["note","หมายเหตุ"],
+  doc_no:["doc_no","docno","vchno","document_no","เลขที่เอกสาร","voucher","voucher_no","ref","doc"],
   line_no:["line_no","lineno","line","บรรทัด","item_no"],
-  doc_date:["doc_date","date","วันที่","posting_date","วันที่เอกสาร"],
-  description:["description","desc","รายละเอียด","detail","narration"],
-  vendor:["vendor","supplier","ผู้ขาย","คู่ค้า"],
+  doc_date:["doc_date","vchdate","date","วันที่","posting_date","วันที่เอกสาร"],
+  description:["description","ac_des","remark","desc","รายละเอียด","detail","narration"],
+  vendor:["vendor","vend_cust","supplier","ผู้ขาย","คู่ค้า"],
 };
 const MONTH_TH=["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
 function mapHeader(head){
@@ -28,6 +31,10 @@ function toPeriod(v, fallbackDate){
   if(/^\d{4}-\d{1,2}$/.test(s)){ const p=s.split("-"); return p[0]+"-"+String(p[1]).padStart(2,"0"); }
   const m1=s.match(/^(\d{1,2})[\/\-.](\d{4})$/);
   if(m1){ let y=Number(m1[2]); if(y>2400) y-=543; return y+"-"+m1[1].padStart(2,"0"); }
+  // glperiod = เลขเดือนล้วน (1-12) → ต้องอาศัยปีจาก doc_date
+  if(/^\d{1,2}$/.test(s) && Number(s)>=1 && Number(s)<=12 && fallbackDate){
+    return String(fallbackDate).slice(0,4)+"-"+s.padStart(2,"0");
+  }
   const d=toDate(s);
   if(d) return d.slice(0,7);
   if(fallbackDate) return String(fallbackDate).slice(0,7);
@@ -208,37 +215,52 @@ export default function Budget(){
     if(!file) return;
     setBusy(kind); setResult(null); setMsg(null);
     try{
-      const grid=await readSheet(file);
-      if(grid.length<2) throw new Error("ไฟล์ว่าง หรือมีแต่หัวตาราง");
+      // หาแถวหัวตารางเอง — ไฟล์ Raw GL จากบัญชีมีหัวรายงานอยู่ข้างบน 4 แถว
+      const must = kind==="budget" ? ["department","amount"] : ["dpt_name","vchno","department","doc_no"];
+      const { grid, headerRow }=await readSheetAt(file,{ mustHave:must });
+      if(grid.length<2) throw new Error("ไฟล์ว่าง หรือหาหัวตารางไม่เจอ");
       const ix=mapHeader(grid[0]);
-      const need=(kind==="budget"?["department","amount"]:["department","doc_no","amount"]).filter(k=>ix[k]<0);
+      const need=(kind==="budget"?["department","amount"]:["department","doc_no"]).filter(k=>ix[k]<0);
       if(need.length) throw new Error("ไม่พบคอลัมน์: "+need.join(", ")+" — โหลดเทมเพลตไปใช้ก่อน");
+      const hasAmt = ix.amount>=0 || (ix.amtdr>=0 && ix.amtcr>=0);
+      if(!hasAmt) throw new Error("ไม่พบคอลัมน์จำนวนเงิน (amount / Dr-Cr / amtdr+amtcr)");
 
       const { data:sess }=await supabase.auth.getSession(); const uid=sess.session.user.id;
-      const recs=[]; const errors=[]; const seen={};
+      const recs=[]; const errors=[]; const seen={}; const lineSeq={}; let zeroSkipped=0;
       for(let r=1;r<grid.length;r++){
         const row=grid[r]; const g=k=>ix[k]>=0?String(row[ix[k]]??"").trim():"";
-        const d=g("department"); const amt=toNum(g("amount"));
-        if(!d && isNaN(amt)) continue;
-        if(!d){ errors.push("แถว "+(r+1)+": ไม่ระบุฝ่าย"); continue; }
-        if(isNaN(amt)){ errors.push("แถว "+(r+1)+": จำนวนเงินไม่ใช่ตัวเลข ("+g("amount")+")"); continue; }
+        const rowNo=r+headerRow+1;
+        const d=g("department");
+        // จำนวนเงิน: ใช้ amount/Dr-Cr ถ้ามี ไม่งั้นคำนวณ amtdr - amtcr
+        let amt=toNum(g("amount"));
+        if(isNaN(amt) && ix.amtdr>=0){
+          const dr=toNum(g("amtdr")), cr=toNum(g("amtcr"));
+          amt=(isNaN(dr)?0:dr)-(isNaN(cr)?0:cr);
+        }
+        if(!d && (isNaN(amt)||amt===0)) continue;
+        if(!d){ errors.push("แถว "+rowNo+": ไม่ระบุฝ่าย"); continue; }
+        if(isNaN(amt)){ errors.push("แถว "+rowNo+": จำนวนเงินไม่ใช่ตัวเลข ("+g("amount")+")"); continue; }
+        if(kind==="actual" && amt===0){ zeroSkipped++; continue; }
         const dd=toDate(g("doc_date"));
         const per=toPeriod(g("period"), dd);
-        if(!per){ errors.push("แถว "+(r+1)+": ระบุงวดไม่ได้ (ใส่ period เช่น 2026-07 หรือ doc_date)"); continue; }
+        if(!per){ errors.push("แถว "+rowNo+": ระบุงวดไม่ได้ (ใส่ period เช่น 2026-07 หรือ doc_date)"); continue; }
 
         if(kind==="budget"){
           const code=g("cost_code")||null;
           const k2=d.toLowerCase()+"|"+per+"|"+(code||"").toLowerCase();
-          if(seen[k2]){ errors.push("แถว "+(r+1)+": ซ้ำในไฟล์ ("+d+" "+per+" "+(code||"รวม")+")"); continue; }
+          if(seen[k2]){ errors.push("แถว "+rowNo+": ซ้ำในไฟล์ ("+d+" "+per+" "+(code||"รวม")+")"); continue; }
           seen[k2]=1;
           recs.push({ department:d, period:per, cost_code:code, amount:amt,
             note:g("note")||null, source_file:file.name, updated_by:uid, updated_at:new Date().toISOString() });
         } else {
           const doc=g("doc_no");
-          if(!doc){ errors.push("แถว "+(r+1)+": ไม่มีเลขที่เอกสาร"); continue; }
-          const line=ix.line_no>=0 ? (parseInt(g("line_no"),10)||1) : 1;
+          if(!doc){ errors.push("แถว "+rowNo+": ไม่มีเลขที่เอกสาร"); continue; }
+          // ⭐ ไฟล์ Raw GL ไม่มี line_no แต่ 1 เอกสารมีได้หลายร้อยบรรทัด → เดินเลขเองตามลำดับในไฟล์
+          let line;
+          if(ix.line_no>=0 && g("line_no")) line=parseInt(g("line_no"),10)||1;
+          else { lineSeq[doc]=(lineSeq[doc]||0)+1; line=lineSeq[doc]; }
           const k2=doc+"#"+line;
-          if(seen[k2]){ errors.push("แถว "+(r+1)+": ซ้ำในไฟล์ ("+k2+")"); continue; }
+          if(seen[k2]){ errors.push("แถว "+rowNo+": ซ้ำในไฟล์ ("+k2+")"); continue; }
           seen[k2]=1;
           recs.push({ department:d, period:per, doc_no:doc, line_no:line, doc_date:dd,
             cost_code:g("cost_code")||null, description:g("description")||null, vendor:g("vendor")||null,
@@ -246,12 +268,17 @@ export default function Budget(){
         }
       }
       if(!recs.length) throw new Error("ไม่มีแถวที่ใช้ได้เลย");
+      if(zeroSkipped) errors.push("ข้ามแถวยอด 0 บาท "+zeroSkipped+" แถว");
 
       let ok=0;
       if(kind==="actual"){
+        // ล้างงวดที่มีในไฟล์ก่อน แล้วใส่ใหม่ → อัปโหลดไฟล์ที่อัปเดตแล้วซ้ำได้ ตัวเลขไม่บาน
+        const pers=[...new Set(recs.map(x=>x.period))];
+        const { error:dErr }=await supabase.from("hub_dept_actuals").delete().in("period",pers);
+        if(dErr) errors.push("ล้างข้อมูลงวดเดิมไม่สำเร็จ: "+dErr.message);
         for(let i=0;i<recs.length;i+=300){
           const chunk=recs.slice(i,i+300);
-          const { error }=await supabase.from("hub_dept_actuals").upsert(chunk,{onConflict:"doc_no,line_no"});
+          const { error }=await supabase.from("hub_dept_actuals").insert(chunk);
           if(error) errors.push("บันทึกไม่สำเร็จ: "+error.message); else ok+=chunk.length;
         }
       } else {
@@ -315,8 +342,8 @@ export default function Budget(){
           desc={<>คอลัมน์: <span className="mono">department, period, cost_code, amount</span><br/>
             อัปโหลดซ้ำ = <b>ทับงบของฝ่าย+งวดนั้นทั้งชุด</b> · เว้น cost_code = งบรวมทั้งฝ่าย</>}/>
         <Card kind="actual" title="② ใช้จริง (จากบัญชี)" tpl={tplActual}
-          desc={<>คอลัมน์: <span className="mono">department, doc_no, amount</span> (+ doc_date, cost_code…)<br/>
-            กันซ้ำด้วย <b>doc_no + line_no</b> · ไม่ใส่ period ก็ได้ ระบบดึงงวดจาก doc_date ให้</>}/>
+          desc={<>✅ อัปโหลดไฟล์ <b>Raw GL</b> จากบัญชีได้ตรง ๆ (<span className="mono">dpt_name, ac_code, vchno, vchdate, Dr-Cr</span>)<br/>
+            ระบบหาหัวตารางเอง · เดินเลขบรรทัดให้เอง · อัปโหลดซ้ำ = <b>แทนที่งวดที่อยู่ในไฟล์</b> ไม่บาน</>}/>
       </div>
       {result&&(<div style={{marginTop:12,background:"#F8FAFC",border:"1px solid #E4E7EB",borderRadius:8,padding:"10px 12px",fontSize:12.5,lineHeight:1.8}}>
         {result.ok>0&&<div>✅ นำเข้า{result.kind==="budget"?"งบ":"ใช้จริง"}สำเร็จ <b>{result.ok}</b> / {result.total} แถว · รวม <b>{fmtMoney(result.sum)}</b></div>}
