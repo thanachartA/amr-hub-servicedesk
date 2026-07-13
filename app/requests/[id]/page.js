@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
-import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany } from "../../../components/util";
+import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, fmtSize, fileIcon } from "../../../components/util";
 
 export default function RequestDetail(){
   const { id }=useParams();
@@ -11,6 +11,7 @@ export default function RequestDetail(){
   const [team,setTeam]=useState([]); const [uid,setUid]=useState(null); const [staff,setStaff]=useState(false); const [canManage,setCanManage]=useState(false); const [canAssign,setCanAssign]=useState(false);
   const [assignee,setAssignee]=useState(""); const [msg,setMsg]=useState(null);
   const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
+  const [atts,setAtts]=useState([]); const [upBusy,setUpBusy]=useState(false);
   const load=useCallback(async()=>{
     const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours),requester:requester_id(full_name),assignee:assignee_id(full_name)").eq("id",id).single();
     setR(req); setAssignee(req?.assignee_id||"");
@@ -18,6 +19,8 @@ export default function RequestDetail(){
     setExp(e||[]);
     const { data:l }=await supabase.from("hub_activity_log").select("*,actor:actor_id(full_name)").eq("request_id",id).order("created_at",{ascending:true});
     setLog(l||[]);
+    const { data:at }=await supabase.from("hub_attachments").select("*,uploader:uploaded_by(full_name)").eq("request_id",id).order("created_at",{ascending:true});
+    setAtts(at||[]);
   },[id]);
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); const u=sess.session.user.id; setUid(u);
@@ -59,6 +62,14 @@ export default function RequestDetail(){
     await act("reject",{status:"in_progress",rework_count:(r.rework_count||0)+1,review_note:note},"ตีกลับแก้ไข: "+note);
     notify(r.assignee_id,"งานถูกตีกลับให้แก้ไข",tk+" · "+(note||""),link,id);
   }
+  async function addFiles(e){
+    const fs=[...(e.target.files||[])]; if(!fs.length) return;
+    setUpBusy(true); setMsg(null);
+    const errs=await uploadAttachments(id, uid, fs);
+    setUpBusy(false); e.target.value="";
+    setMsg(errs.length ? ("แนบไม่สำเร็จบางไฟล์: "+errs.join(" · ")) : "แนบไฟล์แล้ว");
+    load();
+  }
   async function submitCsat(){
     if(!cs) return;
     await supabase.from("hub_requests").update({csat_rating:cs,csat_comment:cc||null,csat_at:new Date().toISOString()}).eq("id",id);
@@ -83,6 +94,28 @@ export default function RequestDetail(){
             {r.sla_due_at&&new Date(r.sla_due_at)<now&&!["review","closed","cancelled"].includes(r.status)&&<b style={{color:"#B03A2E"}}> · เกิน SLA</b>}</div>
           {r.review_note&&["in_progress","assigned","waiting"].includes(r.status)&&r.rework_count>0&&
             <div style={{marginTop:8,padding:"8px 10px",background:"#FBF1DE",borderRadius:6,fontSize:13,color:"#9A5B00"}}>ตีกลับให้แก้: {r.review_note}</div>}
+        </div>
+
+        <div className="card">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <h2 style={{margin:0}}>ไฟล์แนบ ({atts.length})</h2>
+            {(staff||uid===r.requester_id)&&<label className="btn sm sec" style={{cursor:"pointer",margin:0}}>
+              {upBusy?"กำลังอัปโหลด…":"+ แนบไฟล์"}
+              <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv" disabled={upBusy}
+                onChange={addFiles} style={{display:"none"}}/>
+            </label>}
+          </div>
+          {atts.length===0&&<div className="muted" style={{fontSize:13}}>ยังไม่มีไฟล์แนบ</div>}
+          <div style={{display:"grid",gap:6}}>
+            {atts.map(a=>(<div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#F6F7F9",border:"1px solid #E4E7EB",borderRadius:8,padding:"8px 12px"}}>
+              <div style={{fontSize:13,minWidth:0}}>
+                <span style={{marginRight:6}}>{fileIcon(a.mime_type)}</span>
+                <b style={{wordBreak:"break-all"}}>{a.file_name}</b>
+                <div className="muted" style={{fontSize:11,marginTop:2}}>{fmtSize(a.size_bytes)} · {a.uploader?.full_name||"—"} · {fmtDate(a.created_at)}</div>
+              </div>
+              <button className="btn sm" style={{flexShrink:0,marginLeft:10}} onClick={async()=>{ const ok=await openAttachment(a.file_path); if(!ok) setMsg("เปิดไฟล์ไม่สำเร็จ (ไม่มีสิทธิ์ หรือไฟล์หาย)"); }}>เปิด / ดาวน์โหลด</button>
+            </div>))}
+          </div>
         </div>
 
         {canRate&&(<div className="card">
