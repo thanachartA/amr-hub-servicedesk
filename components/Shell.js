@@ -18,6 +18,8 @@ export default function Shell({ children, title }) {
     let timer;
     supabase.auth.getSession().then(async ({ data }) => {
       if (!data.session) { router.replace("/login"); return; }
+      // Admin ตั้งรหัสชั่วคราวให้ → บังคับตั้งรหัสของตัวเองก่อนใช้งาน
+      if (data.session.user.user_metadata?.must_change_password) { router.replace("/reset"); return; }
       const u = data.session.user.id; setUid(u);
       const { data: p } = await supabase.from("profiles").select("id,full_name,role").eq("id", u).maybeSingle();
       const { data: t } = await supabase.from("hub_team").select("hub_role").eq("user_id", u).maybeSingle();
