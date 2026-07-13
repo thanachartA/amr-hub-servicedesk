@@ -95,6 +95,60 @@ export function parseCSV(text){
 }
 
 // export ตารางเป็น CSV (รองรับ Excel ภาษาไทยด้วย BOM)
+// โหลดตัวอ่าน Excel (SheetJS) แบบ lazy — โหลดเฉพาะตอนที่มีคนอัปโหลด .xlsx จริง
+let _xlsxPromise=null;
+export function loadXLSX(){
+  if(typeof window==="undefined") return Promise.reject(new Error("ใช้ได้เฉพาะบนเบราว์เซอร์"));
+  if(window.XLSX) return Promise.resolve(window.XLSX);
+  if(_xlsxPromise) return _xlsxPromise;
+  _xlsxPromise=new Promise((res,rej)=>{
+    const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    s.onload=()=>res(window.XLSX);
+    s.onerror=()=>{ _xlsxPromise=null; rej(new Error("โหลดตัวอ่าน Excel ไม่สำเร็จ — ลองบันทึกไฟล์เป็น .csv แล้วอัปโหลดใหม่")); };
+    document.head.appendChild(s);
+  });
+  return _xlsxPromise;
+}
+
+// อ่าน .xlsx / .xls / .csv -> ตาราง 2 มิติ (แถวแรก = หัวคอลัมน์)
+export async function readSheet(file){
+  const name=String(file?.name||"").toLowerCase();
+  if(name.endsWith(".csv")||name.endsWith(".txt")) return parseCSV(await file.text());
+  const XLSX=await loadXLSX();
+  const wb=XLSX.read(await file.arrayBuffer(),{type:"array",cellDates:true});
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  const grid=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:""});
+  return grid.filter(r=>Array.isArray(r)&&r.some(x=>String(x??"").trim()!==""));
+}
+
+// แปลงตัวเลขจาก Excel/CSV (รองรับ 1,234.50 / (1,234) = ติดลบ / ฿)
+export function toNum(v){
+  let s=String(v??"").trim().replace(/[฿,\s]/g,"");
+  if(!s) return NaN;
+  let neg=false;
+  if(/^\(.*\)$/.test(s)){ neg=true; s=s.slice(1,-1); }
+  const n=Number(s);
+  if(isNaN(n)) return NaN;
+  return neg?-n:n;
+}
+
+// แปลงวันที่จาก Excel/CSV -> YYYY-MM-DD (รองรับ d/m/yyyy และ พ.ศ.)
+export function toDate(v){
+  const s=String(v??"").trim();
+  if(!s) return null;
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+  const m=s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
+  if(m){
+    let [_,d,mo,y]=m; y=Number(y);
+    if(y<100) y+=2000;
+    if(y>2400) y-=543;             // พ.ศ. -> ค.ศ.
+    return [y,String(mo).padStart(2,"0"),String(d).padStart(2,"0")].join("-");
+  }
+  const dt=new Date(s);
+  return isNaN(dt) ? null : dt.toISOString().slice(0,10);
+}
+
 export function downloadCSV(filename, columns, rows){
   const esc=v=>{ const s=(v==null?"":String(v)); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
   const head=columns.map(c=>esc(c.label)).join(",");
