@@ -13,7 +13,7 @@ export default function RequestDetail(){
   const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
   const [atts,setAtts]=useState([]); const [upBusy,setUpBusy]=useState(false); const [thumbs,setThumbs]=useState({});
   const load=useCallback(async()=>{
-    const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours),requester:requester_id(full_name),assignee:assignee_id(full_name),suggested:suggested_assignee_id(full_name)").eq("id",id).single();
+    const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours),requester:requester_id(full_name),assignee:assignee_id(full_name),suggested:suggested_assignee_id(full_name),project:project_id(code,name)").eq("id",id).single();
     setR(req); setAssignee(req?.assignee_id||"");
     const { data:e }=await supabase.from("hub_expense_entries").select("*,projects(code,name,budget_amount),hub_cost_codes(code,name)").eq("request_id",id);
     setExp(e||[]);
@@ -99,6 +99,7 @@ export default function RequestDetail(){
             <span className="tag">{r.hub_request_types?.name}</span>
           </div>
           <h2 style={{fontSize:18}}>{r.title}</h2>
+          {r.project&&<div style={{margin:"6px 0"}}><span className="tag" style={{background:"#EEF4FF",borderColor:"#C7D9F7",color:"#2D6CDF"}}>📁 {r.project.code} · {r.project.name}</span></div>}
           <p className="muted" style={{whiteSpace:"pre-wrap",margin:"8px 0"}}>{r.detail||"—"}</p>
           <div className="muted">ผู้ขอ: {r.requester?.full_name||"—"} · ความเร่งด่วน: {r.priority} · ครบ SLA: {fmtDate(r.sla_due_at)}
             {r.sla_due_at&&new Date(r.sla_due_at)<now&&!["review","closed","cancelled"].includes(r.status)&&<b style={{color:"#B03A2E"}}> · เกิน SLA</b>}</div>
