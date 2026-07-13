@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
-import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, fmtSize, fileIcon } from "../../../components/util";
+import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, deleteAttachment, signedUrls, isImage, fmtSize, fileIcon } from "../../../components/util";
 
 export default function RequestDetail(){
   const { id }=useParams();
@@ -11,7 +11,7 @@ export default function RequestDetail(){
   const [team,setTeam]=useState([]); const [uid,setUid]=useState(null); const [staff,setStaff]=useState(false); const [canManage,setCanManage]=useState(false); const [canAssign,setCanAssign]=useState(false);
   const [assignee,setAssignee]=useState(""); const [msg,setMsg]=useState(null);
   const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
-  const [atts,setAtts]=useState([]); const [upBusy,setUpBusy]=useState(false);
+  const [atts,setAtts]=useState([]); const [upBusy,setUpBusy]=useState(false); const [thumbs,setThumbs]=useState({});
   const load=useCallback(async()=>{
     const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours),requester:requester_id(full_name),assignee:assignee_id(full_name)").eq("id",id).single();
     setR(req); setAssignee(req?.assignee_id||"");
@@ -21,6 +21,7 @@ export default function RequestDetail(){
     setLog(l||[]);
     const { data:at }=await supabase.from("hub_attachments").select("*,uploader:uploaded_by(full_name)").eq("request_id",id).order("created_at",{ascending:true});
     setAtts(at||[]);
+    setThumbs(await signedUrls((at||[]).filter(a=>isImage(a.mime_type)).map(a=>a.file_path), 900));
   },[id]);
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); const u=sess.session.user.id; setUid(u);
@@ -70,6 +71,12 @@ export default function RequestDetail(){
     setMsg(errs.length ? ("แนบไม่สำเร็จบางไฟล์: "+errs.join(" · ")) : "แนบไฟล์แล้ว");
     load();
   }
+  async function removeFile(a){
+    if(!confirm('ลบไฟล์ "'+a.file_name+'" ?')) return;
+    const err=await deleteAttachment(a);
+    setMsg(err ? ("ลบไม่สำเร็จ: "+err) : "ลบไฟล์แล้ว");
+    load();
+  }
   async function submitCsat(){
     if(!cs) return;
     await supabase.from("hub_requests").update({csat_rating:cs,csat_comment:cc||null,csat_at:new Date().toISOString()}).eq("id",id);
@@ -107,14 +114,23 @@ export default function RequestDetail(){
           </div>
           {atts.length===0&&<div className="muted" style={{fontSize:13}}>ยังไม่มีไฟล์แนบ</div>}
           <div style={{display:"grid",gap:6}}>
-            {atts.map(a=>(<div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#F6F7F9",border:"1px solid #E4E7EB",borderRadius:8,padding:"8px 12px"}}>
-              <div style={{fontSize:13,minWidth:0}}>
-                <span style={{marginRight:6}}>{fileIcon(a.mime_type)}</span>
-                <b style={{wordBreak:"break-all"}}>{a.file_name}</b>
-                <div className="muted" style={{fontSize:11,marginTop:2}}>{fmtSize(a.size_bytes)} · {a.uploader?.full_name||"—"} · {fmtDate(a.created_at)}</div>
+            {atts.map(a=>{ const canDel = canManage || a.uploaded_by===uid; const th=thumbs[a.file_path];
+              return (<div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,background:"#F6F7F9",border:"1px solid #E4E7EB",borderRadius:8,padding:"8px 12px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+                {th
+                  ? <img src={th} alt={a.file_name} onClick={()=>openAttachment(a.file_path)}
+                      style={{width:52,height:52,objectFit:"cover",borderRadius:6,border:"1px solid #DDE3E8",cursor:"pointer",flexShrink:0,background:"#fff"}}/>
+                  : <div style={{width:52,height:52,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,borderRadius:6,border:"1px solid #DDE3E8",background:"#fff",flexShrink:0}}>{fileIcon(a.mime_type)}</div>}
+                <div style={{fontSize:13,minWidth:0}}>
+                  <b style={{wordBreak:"break-all"}}>{a.file_name}</b>
+                  <div className="muted" style={{fontSize:11,marginTop:2}}>{fmtSize(a.size_bytes)} · {a.uploader?.full_name||"—"} · {fmtDate(a.created_at)}</div>
+                </div>
               </div>
-              <button className="btn sm" style={{flexShrink:0,marginLeft:10}} onClick={async()=>{ const ok=await openAttachment(a.file_path); if(!ok) setMsg("เปิดไฟล์ไม่สำเร็จ (ไม่มีสิทธิ์ หรือไฟล์หาย)"); }}>เปิด / ดาวน์โหลด</button>
-            </div>))}
+              <div style={{display:"flex",gap:6,flexShrink:0}}>
+                <button className="btn sm" onClick={async()=>{ const ok=await openAttachment(a.file_path); if(!ok) setMsg("เปิดไฟล์ไม่สำเร็จ (ไม่มีสิทธิ์ หรือไฟล์หาย)"); }}>เปิด</button>
+                {canDel&&<button className="btn sm sec" style={{color:"#B03A2E"}} onClick={()=>removeFile(a)}>ลบ</button>}
+              </div>
+            </div>); })}
           </div>
         </div>
 
