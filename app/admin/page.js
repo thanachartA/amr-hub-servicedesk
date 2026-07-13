@@ -9,6 +9,7 @@ export default function Admin(){
   const [canManage,setCanManage]=useState(false); const [ready,setReady]=useState(false);
   const [rows,setRows]=useState([]); const [team,setTeam]=useState({}); const [q,setQ]=useState(""); const [msg,setMsg]=useState(null);
   const [types,setTypes]=useState([]); const [staff,setStaff]=useState([]);
+  const [projects,setProjects]=useState([]); const [pq,setPq]=useState(""); const [onlyUnset,setOnlyUnset]=useState(false);
   async function load(){
     const { data:prof }=await supabase.from("profiles").select("id,full_name,email,department,position,employee_id,role").order("full_name").limit(2000);
     const { data:t }=await supabase.from("hub_team").select("user_id,hub_role,is_available,profiles:user_id(id,full_name)");
@@ -17,6 +18,15 @@ export default function Admin(){
     setStaff((t||[]).filter(x=>x.profiles).map(x=>({id:x.profiles.id,name:x.profiles.full_name,role:x.hub_role,avail:x.is_available})));
     const { data:rt }=await supabase.from("hub_request_types").select("id,name,category,routing_mode,primary_owner_id,backup_owner_id,default_sla_hours").eq("is_active",true).order("sort_order");
     setTypes(rt||[]);
+    const { data:pj }=await supabase.from("projects").select("id,code,name,hub_owner_id,hub_backup_owner_id").order("code").limit(500);
+    setProjects(pj||[]);
+  }
+  async function setProjOwner(projId, field, value){
+    setMsg(null);
+    const { error }=await supabase.from("projects").update({[field]: value||null}).eq("id",projId);
+    if(error){ setMsg("ผิดพลาด: "+error.message); return; }
+    setProjects(ps=>ps.map(p=>p.id===projId?{...p,[field]:value||null}:p));
+    setMsg("บันทึกเจ้าประจำโครงการแล้ว");
   }
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession();
@@ -42,6 +52,13 @@ export default function Admin(){
   const border=r=>({owner:"#E81828",lead:"#2D6CDF",supervisor:"#7A5AF8",agent:"#0E9AA6"})[r]||"#E2E7EB";
   const noPrimary=types.filter(t=>t.routing_mode==="skill" && !t.primary_owner_id).length;
   const noBackup=types.filter(t=>t.routing_mode==="skill" && !t.backup_owner_id).length;
+  const nProjOwner=projects.filter(p=>p.hub_owner_id).length;
+  const shownProjects=projects.filter(p=>{
+    if(onlyUnset && p.hub_owner_id) return false;
+    if(!pq) return true;
+    const s=pq.toLowerCase();
+    return (p.code||"").toLowerCase().includes(s) || (p.name||"").toLowerCase().includes(s);
+  });
   return (<Shell title="จัดการผู้ใช้ & สิทธิ์">
     {msg&&<div className="ok">{msg}</div>}
     <div className="kpis" style={{gridTemplateColumns:"repeat(4,1fr)"}}>
@@ -81,6 +98,40 @@ export default function Admin(){
         </select></td>
       </tr>))}
         {!types.length&&<tr><td colSpan="4" className="muted">ไม่มีประเภทงาน</td></tr>}</tbody></table>
+    </div>
+
+    <div className="card">
+      <h2>📁 เจ้าประจำโครงการ (ชนะกติกาประเภทงาน)</h2>
+      <p className="muted" style={{marginBottom:10,fontSize:12.5}}>
+        ถ้าคำขอระบุโครงการที่มีเจ้าประจำ → ระบบแนะนำ <b>คนของโครงการนั้น</b> ทันที (ไม่ต้องเดาจากประเภทงาน)<br/>
+        ตั้งครบแล้ว <b>{nProjOwner}</b> / {projects.length} โครงการ
+      </p>
+      <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+        <input value={pq} onChange={e=>setPq(e.target.value)} placeholder="ค้นหา รหัส / ชื่อโครงการ…"
+          style={{maxWidth:300,padding:"9px 11px",border:"1px solid #E4E7EB",borderRadius:8,fontSize:13.5,fontFamily:"inherit"}}/>
+        <label style={{fontSize:12.5,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+          <input type="checkbox" checked={onlyUnset} onChange={e=>setOnlyUnset(e.target.checked)} style={{width:"auto"}}/>
+          แสดงเฉพาะที่ยังไม่ตั้ง
+        </label>
+        <span className="muted" style={{fontSize:12,marginLeft:"auto"}}>แสดง {shownProjects.length} รายการ</span>
+      </div>
+      <div style={{maxHeight:420,overflowY:"auto"}}>
+        <table><thead><tr><th>รหัส</th><th>ชื่อโครงการ</th><th>เจ้าประจำ</th><th>ตัวสำรอง</th></tr></thead>
+        <tbody>{shownProjects.map(p=>(<tr key={p.id}>
+          <td className="mono"><b>{p.code}</b></td>
+          <td style={{maxWidth:280,fontSize:12.5}}>{p.name}</td>
+          <td><select value={p.hub_owner_id||""} onChange={e=>setProjOwner(p.id,"hub_owner_id",e.target.value)}
+                style={{minWidth:170,borderColor:!p.hub_owner_id?"#E8A33D":undefined}}>
+            <option value="">— ยังไม่ตั้ง —</option>
+            {staff.map(s=>(<option key={s.id} value={s.id}>{s.name}{!s.avail?" (ลา)":""}</option>))}
+          </select></td>
+          <td><select value={p.hub_backup_owner_id||""} onChange={e=>setProjOwner(p.id,"hub_backup_owner_id",e.target.value)} style={{minWidth:170}}>
+            <option value="">— ยังไม่ตั้ง —</option>
+            {staff.map(s=>(<option key={s.id} value={s.id}>{s.name}{!s.avail?" (ลา)":""}</option>))}
+          </select></td>
+        </tr>))}
+          {!shownProjects.length&&<tr><td colSpan="4" className="muted">ไม่พบโครงการ</td></tr>}</tbody></table>
+      </div>
     </div>
 
     <div className="card">
