@@ -52,6 +52,7 @@ export default function Shell({ children, title }) {
     nav = [["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"]];
     if(canViewAll) nav.push(["/team","ทีม (มอบหมาย)"]);
     nav.push(["/projects","ต้นทุนโครงการ"]);
+    nav.push(["/budget","งบประมาณฝ่าย"]);
     nav.push(["/reports","รายงานปิดเดือน"]);
     nav.push(["/performance","Performance"]);
     nav.push(["/executive","รายงานผู้บริหาร"]);
