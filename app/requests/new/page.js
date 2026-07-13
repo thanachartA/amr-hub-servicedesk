@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
-import { notifyMany } from "../../../components/util";
+import { notifyMany, uploadAttachments, fmtSize, fileIcon } from "../../../components/util";
 
 const THRESHOLD=100000;
 const CAT={ finance:{label:"💰 การเงิน & เบิกจ่าย",order:1}, procurement:{label:"🛒 จัดซื้อ & Vendor",order:2}, ga:{label:"🏢 ธุรการ & ยานพาหนะ",order:3} };
@@ -20,6 +20,7 @@ export default function NewRequest(){
   const [types,setTypes]=useState([]); const [projects,setProjects]=useState([]); const [codes,setCodes]=useState([]);
   const [form,setForm]=useState({type:"",title:"",detail:"",priority:"normal",due:"",project:"",cost:"",amount:""});
   const [err,setErr]=useState(null); const [busy,setBusy]=useState(false);
+  const [files,setFiles]=useState([]);
   useEffect(()=>{ (async()=>{
     const [t,p,c]=await Promise.all([
       supabase.from("hub_request_types").select("*").eq("is_active",true).order("sort_order"),
@@ -43,6 +44,10 @@ export default function NewRequest(){
         request_id:req.id, project_id:form.project||null, cost_code_id:form.cost||null,
         amount:amt, approval_status: amt>THRESHOLD?"pending":"not_required"
       });
+    }
+    if(files.length){
+      const errs=await uploadAttachments(req.id, uid, files);
+      if(errs.length) setErr("บางไฟล์แนบไม่สำเร็จ: "+errs.join(" · "));
     }
     await supabase.from("hub_activity_log").insert({request_id:req.id,actor_id:uid,action:"created",to_status:"new"});
     const { data:leads }=await supabase.from("hub_team").select("user_id").in("hub_role",["owner","lead","supervisor"]);
@@ -83,6 +88,19 @@ export default function NewRequest(){
           <div className="field"><label>จำนวนเงิน (บาท)</label><input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0"/></div>
           {Number(form.amount)>THRESHOLD&&<div className="muted" style={{color:"#B26A00"}}>⚠ ยอด &gt; 100,000 — ต้องขออนุมัติเพิ่มก่อนตัดยอด</div>}
         </div>)}
+        <div className="field">
+          <label>แนบไฟล์ (ใบเสร็จ / สลิป / รูปถ่าย / เอกสาร)</label>
+          <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv"
+            onChange={e=>setFiles([...e.target.files])}
+            style={{padding:"7px 9px",background:"#fff"}}/>
+          <div className="muted" style={{fontSize:11,marginTop:4}}>รูป / PDF / Word / Excel · สูงสุด 10MB ต่อไฟล์ · แนบได้หลายไฟล์</div>
+          {files.length>0&&<div style={{marginTop:8,display:"grid",gap:4}}>
+            {files.map((f,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#F6F7F9",border:"1px solid #E4E7EB",borderRadius:8,padding:"6px 10px",fontSize:12.5}}>
+              <span>{fileIcon(f.type)} {f.name} <span className="muted">({fmtSize(f.size)})</span>{f.size>10*1024*1024&&<b style={{color:"#B03A2E"}}> · ใหญ่เกิน 10MB</b>}</span>
+              <a href="#" onClick={e=>{e.preventDefault();setFiles(files.filter((_,j)=>j!==i));}} style={{color:"#B03A2E",fontSize:12}}>ลบ</a>
+            </div>))}
+          </div>}
+        </div>
         <button className="btn" disabled={busy}>{busy?"กำลังส่ง…":"ส่งคำขอ"}</button>
       </form>
     </div>
