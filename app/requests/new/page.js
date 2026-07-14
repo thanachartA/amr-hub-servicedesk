@@ -50,10 +50,10 @@ export default function NewRequest(){
     }).select().single();
     if(error){ setErr(error.message); setBusy(false); return; }
     if(needExpense && form.amount){
-      const amt=Number(form.amount);
+      // สถานะอนุมัติถูกกำหนดโดย trigger ฝั่ง DB (มีเงิน > 0 → รอ Supervisor เสมอ)
       await supabase.from("hub_expense_entries").insert({
         request_id:req.id, project_id:form.project||null, cost_code_id:form.cost||null,
-        amount:amt, approval_status: amt>THRESHOLD?"pending":"not_required"
+        amount:Number(form.amount)
       });
     }
     if(files.length){
