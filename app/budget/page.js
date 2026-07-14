@@ -6,7 +6,9 @@ import { fmtMoney, downloadCSV, readSheetAt, toNum, toDate } from "../../compone
 
 // รองรับทั้งเทมเพลตของเรา และไฟล์ Raw GL จากบัญชีโดยตรง (dpt_name / ac_code / vchno / vchdate / Dr-Cr)
 const ALIAS={
-  department:["department","dept","dpt_name","dpt_code","ฝ่าย","แผนก","หน่วยงาน","cost_center","costcenter","ศูนย์ต้นทุน"],
+  department:["department","dept","dpt_name","dept_name","ชื่อฝ่าย","ฝ่าย","แผนก","หน่วยงาน","cost_center","costcenter","ศูนย์ต้นทุน"],
+  dept_code:["dpt_code","dept_code","รหัสฝ่าย","รหัสแผนก","dptcode"],
+  cost_name:["ac_des","account_name","ชื่อบัญชี","ชื่อหมวด","cost_name"],
   period:["period","งวด","เดือน","month","yyyy-mm","glperiod"],
   cost_code:["cost_code","costcode","ac_code","account_no","รหัสต้นทุน","account","account_code","หมวด","หมวดค่าใช้จ่าย"],
   amount:["amount","dr-cr","จำนวนเงิน","งบประมาณ","budget","total","ยอดเงิน","value"],
@@ -152,6 +154,18 @@ export default function Budget(){
   const yearPct = yearBudget ? Math.round(100*forecast/yearBudget) : 0;
 
   // ---------- ตาราง ฝ่าย × cost code ----------
+  // ดึงชื่อ/รหัส มาจากข้อมูลที่ import (ฝ่าย + cost code)
+  const dictDept=useMemo(()=>{ const m={};
+    [...budgets,...actuals].forEach(x=>{ const k=String(x.department||"").trim();
+      if(k && x.dept_code && !m[k]) m[k]=String(x.dept_code).trim(); });
+    return m; },[budgets,actuals]);
+  const dictCost=useMemo(()=>{ const m={};
+    [...budgets,...actuals].forEach(x=>{ const k=String(x.cost_code||"").trim();
+      if(k && (x.cost_name||x.description) && !m[k]) m[k]=String(x.cost_name||x.description).trim(); });
+    return m; },[budgets,actuals]);
+  const deptLabel=d=>{ const c=dictDept[d]; return c && c!==d ? c+" · "+d : d; };
+  const costLabel=c=>{ const n=dictCost[c]; return n ? c+" · "+n : c; };
+
   const rows=useMemo(()=>{
     const map={};
     const key=(d,c)=>String(d).trim().toLowerCase()+"|"+String(c||"").trim().toLowerCase();
@@ -178,10 +192,11 @@ export default function Budget(){
   // ---------- import ----------
   function tplBudget(){
     downloadCSV("dept_budget_template.csv",
-      [{key:"department",label:"department"},{key:"period",label:"period"},{key:"cost_code",label:"cost_code"},
+      [{key:"dpt_code",label:"dpt_code"},{key:"department",label:"department"},{key:"period",label:"period"},
+       {key:"cost_code",label:"cost_code"},{key:"ac_des",label:"ac_des"},
        {key:"amount",label:"amount"},{key:"note",label:"note"}],
-      [{department:"GA",period:"2026-07",cost_code:"5101",amount:120000,note:"ค่าเดินทาง"},
-       {department:"GA",period:"2026-07",cost_code:"5203",amount:50000,note:"เครื่องเขียน"}]);
+      [{dpt_code:"004",department:"HR",period:"2026-07",cost_code:"6101011",ac_des:"เงินเดือนพนักงาน",amount:120000,note:""},
+       {dpt_code:"003",department:"Administration",period:"2026-07",cost_code:"6102061",ac_des:"ค่าโฆษณา",amount:50000,note:""}]);
   }
   function tplActual(){
     downloadCSV("dept_actual_template.csv",
@@ -194,7 +209,10 @@ export default function Budget(){
   const day=new Date().toISOString().slice(0,10);
   function exportView(){
     downloadCSV("งบฝ่าย_"+year+"_"+day+".csv",[
-      {label:"ฝ่าย",key:"dept"},{label:"Cost Code",get:r=>r.code||"(รวมทั้งฝ่าย)"},
+      {label:"รหัสฝ่าย",get:r=>dictDept[r.dept]||""},
+      {label:"ชื่อฝ่าย",key:"dept"},
+      {label:"Cost Code",get:r=>r.code||"(รวมทั้งฝ่าย)"},
+      {label:"ชื่อบัญชี",get:r=>dictCost[r.code]||""},
       {label:"งบทั้งปี",key:"budget"},{label:"ใช้จริงสะสม",key:"actual"},
       {label:"คงเหลือ",get:r=>r.budget-r.actual},
       {label:"% ใช้",get:r=>r.budget?Math.round(100*r.actual/r.budget):""},
@@ -230,7 +248,9 @@ export default function Budget(){
       for(let r=1;r<grid.length;r++){
         const row=grid[r]; const g=k=>ix[k]>=0?String(row[ix[k]]??"").trim():"";
         const rowNo=r+headerRow+1;
-        const d=g("department");
+        const dcode=g("dept_code");
+        const cname=g("cost_name");
+        const d=g("department") || dcode;   // ถ้าไฟล์มีแต่รหัสฝ่าย ก็ใช้รหัสไปก่อน
         // จำนวนเงิน: ใช้ amount/Dr-Cr ถ้ามี ไม่งั้นคำนวณ amtdr - amtcr
         let amt=toNum(g("amount"));
         if(isNaN(amt) && ix.amtdr>=0){
@@ -250,8 +270,8 @@ export default function Budget(){
           const k2=d.toLowerCase()+"|"+per+"|"+(code||"").toLowerCase();
           if(seen[k2]){ errors.push("แถว "+rowNo+": ซ้ำในไฟล์ ("+d+" "+per+" "+(code||"รวม")+")"); continue; }
           seen[k2]=1;
-          recs.push({ department:d, period:per, cost_code:code, amount:amt,
-            note:g("note")||null, source_file:file.name, updated_by:uid, updated_at:new Date().toISOString() });
+          recs.push({ department:d, dept_code:dcode||null, period:per, cost_code:code, cost_name:cname||null,
+            amount:amt, note:g("note")||null, source_file:file.name, updated_by:uid, updated_at:new Date().toISOString() });
         } else {
           const doc=g("doc_no");
           if(!doc){ errors.push("แถว "+rowNo+": ไม่มีเลขที่เอกสาร"); continue; }
@@ -262,8 +282,9 @@ export default function Budget(){
           const k2=doc+"#"+line;
           if(seen[k2]){ errors.push("แถว "+rowNo+": ซ้ำในไฟล์ ("+k2+")"); continue; }
           seen[k2]=1;
-          recs.push({ department:d, period:per, doc_no:doc, line_no:line, doc_date:dd,
-            cost_code:g("cost_code")||null, description:g("description")||null, vendor:g("vendor")||null,
+          recs.push({ department:d, dept_code:dcode||null, period:per, doc_no:doc, line_no:line, doc_date:dd,
+            cost_code:g("cost_code")||null, cost_name:cname||null,
+            description:g("description")||null, vendor:g("vendor")||null,
             amount:amt, source_file:file.name, imported_by:uid });
         }
       }
@@ -368,7 +389,7 @@ export default function Budget(){
         </select>
         <select value={dept} onChange={e=>setDept(e.target.value)} style={{minWidth:190}}>
           <option value="all">ทุกฝ่าย ({depts.length})</option>
-          {depts.map(d=>(<option key={d} value={d}>{d}</option>))}
+          {depts.map(d=>(<option key={d} value={d}>{deptLabel(d)}</option>))}
         </select>
         <div style={{flex:1}}/>
         <button className="btn sm sec" onClick={exportMonthly}>⬇ Burn rate</button>
@@ -437,7 +458,7 @@ export default function Budget(){
         const m=d.prevM?Math.round(100*(d.curM-d.prevM)/d.prevM):null;
         return (<Fragment key={d.dept}>
           <tr style={{background:"#F8FAFC",fontWeight:700}}>
-            <td>{d.dept}</td>
+            <td>{deptLabel(d.dept)}</td>
             <td className="right">{d.budget?fmtMoney(d.budget):"—"}</td>
             <td className="right">{d.actual?fmtMoney(d.actual):"—"}</td>
             <td className="right" style={{color:rem<0?"#B03A2E":"inherit"}}>{d.budget?fmtMoney(rem):"—"}</td>
@@ -451,7 +472,7 @@ export default function Budget(){
             const p=l.budget?Math.round(100*l.actual/l.budget):0; const rm=l.budget-l.actual;
             const lm=l.prevM?Math.round(100*(l.curM-l.prevM)/l.prevM):null;
             return (<tr key={d.dept+"-"+i}>
-              <td style={{paddingLeft:26}} className="muted">↳ {l.code}</td>
+              <td style={{paddingLeft:26}} className="muted">↳ {costLabel(l.code)}</td>
               <td className="right">{l.budget?fmtMoney(l.budget):"—"}</td>
               <td className="right">{l.actual?fmtMoney(l.actual):"—"}</td>
               <td className="right" style={{color:rm<0?"#B03A2E":"inherit"}}>{l.budget?fmtMoney(rm):"—"}</td>
