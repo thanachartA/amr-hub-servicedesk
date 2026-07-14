@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
-import { notifyMany, uploadAttachments, fmtSize, fileIcon } from "../../../components/util";
+import { notifyMany, uploadAttachments, fmtSize, fileIcon, missingDocs } from "../../../components/util";
 import DynForm, { missingFields } from "../../../components/DynForm";
+import DocSlots from "../../../components/DocSlots";
 
 const THRESHOLD=100000;
 const CAT={ finance:{label:"💰 การเงิน & เบิกจ่าย",order:1}, procurement:{label:"🛒 จัดซื้อ & Vendor",order:2}, ga:{label:"🏢 ธุรการ & ยานพาหนะ",order:3} };
@@ -21,7 +22,8 @@ export default function NewRequest(){
   const [types,setTypes]=useState([]); const [projects,setProjects]=useState([]); const [codes,setCodes]=useState([]);
   const [form,setForm]=useState({type:"",title:"",detail:"",priority:"normal",due:"",project:"",cost:"",amount:""});
   const [err,setErr]=useState(null); const [busy,setBusy]=useState(false);
-  const [files,setFiles]=useState([]);
+  const [files,setFiles]=useState([]);          // เอกสารอื่น ๆ (ไม่เข้าช่อง)
+  const [docs,setDocs]=useState({});            // { slot_key: [File,...] }
   const [fd,setFd]=useState({});
   useEffect(()=>{ (async()=>{
     const [t,p,c]=await Promise.all([
@@ -31,13 +33,20 @@ export default function NewRequest(){
     setTypes(t.data||[]); setProjects(p.data||[]); setCodes(c.data||[]);
   })(); },[]);
   const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
-  function up(k,v){ setForm(s=>({...s,[k]:v})); }
+  function up(k,v){ setForm(s=>({...s,[k]:v})); if(k==="type"){ setDocs({}); setFiles([]); setFd({}); } }
   async function submit(e){ e.preventDefault(); setErr(null);
     // ⛔ บังคับกรอกให้ครบก่อนส่ง
     const miss=missingFields(sel?.form_schema, fd);
     if(miss.length){ setErr("กรอกข้อมูลไม่ครบ — ยังขาด: "+miss.join(" · ")); window.scrollTo({top:0,behavior:"smooth"}); return; }
-    if(sel?.require_attachment && files.length===0){
-      setErr("งานประเภทนี้ต้องแนบเอกสารหลักฐาน (เช่น บิล/ใบเสร็จ/ใบเสนอราคา) อย่างน้อย 1 ไฟล์");
+    // ⛔ เอกสารบังคับต้องครบทุกช่อง
+    const miss2=missingDocs(sel?.doc_slots, docs);
+    if(miss2.length){
+      setErr("เอกสารยังไม่ครบ — ยังขาด: "+miss2.join(" · "));
+      window.scrollTo({top:0,behavior:"smooth"}); return;
+    }
+    const nDocs=Object.values(docs).reduce((s,a)=>s+a.length,0);
+    if(sel?.require_attachment && nDocs===0 && files.length===0){
+      setErr("งานประเภทนี้ต้องแนบเอกสารหลักฐานอย่างน้อย 1 ไฟล์");
       window.scrollTo({top:0,behavior:"smooth"}); return;
     }
     setBusy(true);
@@ -56,8 +65,12 @@ export default function NewRequest(){
         amount:Number(form.amount)
       });
     }
-    if(files.length){
-      const errs=await uploadAttachments(req.id, uid, files);
+    // อัปโหลดเอกสารตามช่อง (ติด slot_key) + เอกสารอื่น ๆ
+    const items=[];
+    Object.entries(docs).forEach(([k,arr])=>arr.forEach(f=>items.push({file:f, slot_key:k})));
+    files.forEach(f=>items.push({file:f, slot_key:null}));
+    if(items.length){
+      const errs=await uploadAttachments(req.id, uid, items);
       if(errs.length) setErr("บางไฟล์แนบไม่สำเร็จ: "+errs.join(" · "));
     }
     await supabase.from("hub_activity_log").insert({request_id:req.id,actor_id:uid,action:"created",to_status:"new"});
@@ -112,18 +125,10 @@ export default function NewRequest(){
           </div>
           {Number(form.amount)>THRESHOLD&&<div className="muted" style={{color:"#B26A00"}}>⚠ ยอด &gt; 100,000 — ต้องขออนุมัติเพิ่มก่อนตัดยอด</div>}
         </div>)}
-        <div className="field">
-          <label>แนบไฟล์ (ใบเสร็จ / สลิป / รูปถ่าย / เอกสาร){sel?.require_attachment&&<span style={{color:"#B03A2E"}}> * บังคับ</span>}</label>
-          <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv"
-            onChange={e=>setFiles([...e.target.files])}
-            style={{padding:"7px 9px",background:"#fff"}}/>
-          <div className="muted" style={{fontSize:11,marginTop:4}}>รูป / PDF / Word / Excel · สูงสุด 10MB ต่อไฟล์ · แนบได้หลายไฟล์</div>
-          {files.length>0&&<div style={{marginTop:8,display:"grid",gap:4}}>
-            {files.map((f,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#F6F7F9",border:"1px solid #E4E7EB",borderRadius:8,padding:"6px 10px",fontSize:12.5}}>
-              <span>{fileIcon(f.type)} {f.name} <span className="muted">({fmtSize(f.size)})</span>{f.size>10*1024*1024&&<b style={{color:"#B03A2E"}}> · ใหญ่เกิน 10MB</b>}</span>
-              <a href="#" onClick={e=>{e.preventDefault();setFiles(files.filter((_,j)=>j!==i));}} style={{color:"#B03A2E",fontSize:12}}>ลบ</a>
-            </div>))}
-          </div>}
+        {sel&&<DocSlots slots={sel.doc_slots} picked={docs} onChange={setDocs}
+          extra={files} onExtra={setFiles}/>}
+        <div className="muted" style={{fontSize:11,marginTop:-6,marginBottom:12}}>
+          รูป / PDF / Word / Excel · สูงสุด 10MB ต่อไฟล์
         </div>
         <button className="btn" disabled={busy}>{busy?"กำลังส่ง…":"ส่งคำขอ"}</button>
       </form>
