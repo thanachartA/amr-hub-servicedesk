@@ -50,7 +50,7 @@ export default function RequestDetail(){
     load();
   }
   const load=useCallback(async()=>{
-    const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours,form_schema),requester:requester_id(full_name),assignee:assignee_id(full_name),suggested:suggested_assignee_id(full_name),project:project_id(code,name)").eq("id",id).single();
+    const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours,form_schema,doc_slots),requester:requester_id(full_name),assignee:assignee_id(full_name),suggested:suggested_assignee_id(full_name),project:project_id(code,name)").eq("id",id).single();
     setR(req); setAssignee(req?.assignee_id||"");
     const { data:e }=await supabase.from("hub_expense_entries").select("*,projects(code,name,budget_amount),hub_cost_codes(code,name)").eq("request_id",id);
     setExp(e||[]);
@@ -72,6 +72,12 @@ export default function RequestDetail(){
     load();
   })(); },[id]);
   if(!r) return <Shell title="คำขอ"><div className="muted">กำลังโหลด…</div></Shell>;
+  // เช็คลิสต์เอกสารตามประเภทงาน
+  const slots = Array.isArray(r.hub_request_types?.doc_slots) ? r.hub_request_types.doc_slots : [];
+  const bySlot = {};
+  atts.forEach(a=>{ if(a.slot_key){ (bySlot[a.slot_key]=bySlot[a.slot_key]||[]).push(a); } });
+  const noSlot = atts.filter(a=>!a.slot_key);
+  const slotLabel = Object.fromEntries(slots.map(s=>[s.key,s.label]));
   const leadIds=team.filter(x=>["owner","lead","supervisor"].includes(x.hub_role)).map(x=>x.profiles?.id).filter(Boolean);
   const link="/requests/"+id;
   const tk=r.ticket_no||""; const ttl=r.title||"";
@@ -152,9 +158,36 @@ export default function RequestDetail(){
           <DynView schema={r.hub_request_types?.form_schema} data={r.form_data||{}}/>
         </div>
 
+        {slots.length>0&&(<div className="card">
+          <h2>📎 เช็คลิสต์เอกสาร ({slots.filter(s=>s.required&&bySlot[s.key]?.length).length}/{slots.filter(s=>s.required).length})</h2>
+          <div style={{display:"grid",gap:6}}>
+            {slots.map(s=>{
+              const has=bySlot[s.key]||[];
+              const ok=has.length>0;
+              return (<div key={s.key} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,
+                border:"1px solid "+(ok?"#B7DEC8":s.required?"#F3C9CE":"#E4E7EB"),
+                background:ok?"#F6FBF8":s.required?"#FFFBFB":"#fff"}}>
+                <span style={{fontSize:15}}>{ok?"✅":s.required?"❌":"⬜"}</span>
+                <b style={{fontSize:13,flex:1}}>{s.label}
+                  {s.required&&<span style={{color:"#B03A2E"}}> *</span>}</b>
+                {ok
+                  ? <span style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
+                      {has.map(a=>(<a key={a.id} href="#" onClick={e=>{e.preventDefault();openAttachment(a.file_path);}}
+                        style={{fontSize:11.5,color:"#2D6CDF",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {fileIcon(a.mime_type,a.file_name)} {a.file_name}</a>))}
+                    </span>
+                  : <span className="muted" style={{fontSize:11.5,color:s.required?"#B03A2E":"#98A4AE"}}>
+                      {s.required?"ยังไม่มี":"ไม่บังคับ"}</span>}
+              </div>);
+            })}
+          </div>
+          {noSlot.length>0&&<p className="muted" style={{fontSize:11.5,marginTop:8}}>
+            + เอกสารอื่น ๆ ที่ไม่ได้อยู่ในเช็คลิสต์ {noSlot.length} ไฟล์ (ดูด้านล่าง)</p>}
+        </div>)}
+
         <div className="card">
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <h2 style={{margin:0}}>ไฟล์แนบ ({atts.length})</h2>
+            <h2 style={{margin:0}}>ไฟล์แนบทั้งหมด ({atts.length})</h2>
             {(staff||uid===r.requester_id)&&<label className="btn sm sec" style={{cursor:"pointer",margin:0}}>
               {upBusy?"กำลังอัปโหลด…":"+ แนบไฟล์"}
               <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv" disabled={upBusy}
@@ -171,6 +204,8 @@ export default function RequestDetail(){
                       style={{width:52,height:52,objectFit:"cover",borderRadius:6,border:"1px solid #DDE3E8",cursor:"pointer",flexShrink:0,background:"#fff"}}/>
                   : <div style={{width:52,height:52,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,borderRadius:6,border:"1px solid #DDE3E8",background:"#fff",flexShrink:0}}>{fileIcon(a.mime_type)}</div>}
                 <div style={{fontSize:13,minWidth:0}}>
+                  {a.slot_key&&<div><span className="tag" style={{fontSize:10,background:"#EEF4FF",color:"#2D6CDF",borderColor:"#C7D9F7"}}>
+                    {slotLabel[a.slot_key]||a.slot_key}</span></div>}
                   <b style={{wordBreak:"break-all"}}>{a.file_name}</b>
                   <div className="muted" style={{fontSize:11,marginTop:2}}>{fmtSize(a.size_bytes)} · {a.uploader?.full_name||"—"} · {fmtDate(a.created_at)}</div>
                 </div>
