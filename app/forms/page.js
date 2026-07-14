@@ -15,9 +15,40 @@ export default function Forms(){
 
   async function load(){
     const { data:rt }=await supabase.from("hub_request_types")
-      .select("id,name,category,form_schema,require_attachment,prep_note")
+      .select("id,name,category,form_schema,require_attachment,prep_note,doc_slots")
       .eq("is_active",true).order("sort_order");
     setTypes(rt||[]);
+  }
+  // ===== รายการเอกสารที่ต้องแนบ =====
+  function slotKey(label, list, self){
+    let base=String(label||"").trim().toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"").slice(0,24);
+    if(!base) base="doc";
+    let k=base,n=2;
+    while(list.some(s=>s!==self && s.key===k)){ k=base+"_"+n; n++; }
+    return k;
+  }
+  async function saveSlots(t, slots){
+    setMsg(null); setErr(null);
+    const { error }=await supabase.from("hub_request_types").update({ doc_slots:slots }).eq("id",t.id);
+    if(error){ setErr("บันทึกไม่สำเร็จ: "+error.message); return false; }
+    setTypes(ts=>ts.map(x=>x.id===t.id?{...x,doc_slots:slots}:x));
+    return true;
+  }
+  async function addSlot(t){
+    const label=prompt("ชื่อเอกสารที่ต้องแนบ:","");
+    if(!label||!label.trim()) return;
+    const cur=Array.isArray(t.doc_slots)?[...t.doc_slots]:[];
+    cur.push({ key:slotKey(label,cur), label:label.trim(), required:true, multiple:false });
+    if(await saveSlots(t,cur)) setMsg('เพิ่มเอกสาร "'+label.trim()+'" แล้ว');
+  }
+  async function delSlot(t, key){
+    const cur=(t.doc_slots||[]).filter(s=>s.key!==key);
+    if(!confirm("ลบรายการเอกสารนี้?")) return;
+    if(await saveSlots(t,cur)) setMsg("ลบรายการเอกสารแล้ว");
+  }
+  async function patchSlot(t, key, patch){
+    const cur=(t.doc_slots||[]).map(s=>s.key===key?{...s,...patch}:s);
+    if(await saveSlots(t,cur)) setMsg("อัปเดตรายการเอกสารแล้ว");
   }
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession();
@@ -115,21 +146,64 @@ export default function Forms(){
         {list.map(t=>{
           const schema=Array.isArray(t.form_schema)?t.form_schema:[];
           const nReq=schema.filter(f=>f.required).length;
+          const dslots=Array.isArray(t.doc_slots)?t.doc_slots:[];
+          const dReq=dslots.filter(s=>s.required).length;
           return (<div key={t.id} style={{border:"1px solid #E4E7EB",borderRadius:10,marginBottom:12,overflow:"hidden"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"#F8FAFC",flexWrap:"wrap"}}>
               <b style={{flex:1,fontSize:13.5}}>{t.name}
                 <span className="muted" style={{fontWeight:400,marginLeft:8,fontSize:11.5}}>
-                  {schema.length} ช่อง · บังคับ {nReq}
+                  {schema.length} ช่อง · บังคับ {nReq} · เอกสาร {dslots.length} (บังคับ {dReq})
                 </span>
               </b>
               <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer",whiteSpace:"nowrap"}}>
                 <input type="checkbox" checked={!!t.require_attachment}
                   onChange={e=>toggleAttach(t,e.target.checked)} style={{width:"auto",margin:0}}/>
-                บังคับแนบไฟล์
+                บังคับแนบไฟล์ (อย่างน้อย 1)
               </label>
               <button className="btn sm sec" onClick={()=>openBuilder(t)} disabled={editId===t.id}>
                 {editId===t.id?"กำลังแก้ไข…":"⚙️ แก้ไข / เพิ่มช่อง"}
               </button>
+            </div>
+
+            {/* ===== รายการเอกสารที่ต้องแนบ ===== */}
+            <div style={{padding:"10px 14px",borderTop:"1px solid #EEF1F3",background:"#FCFDFE"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                <b style={{fontSize:12.5,flex:1}}>📎 เอกสารที่ต้องแนบ (แยกช่อง — ผู้ขอต้องแนบครบถึงจะกดส่งได้)</b>
+                <button className="btn sm sec" onClick={()=>addSlot(t)}>＋ เพิ่มเอกสาร</button>
+              </div>
+              {dslots.length===0
+                ? <div className="muted" style={{fontSize:12}}>ยังไม่ได้กำหนด — ผู้ขอจะเห็นแค่ช่องแนบไฟล์อิสระ</div>
+                : <table style={{margin:0}}>
+                    <thead><tr>
+                      <th style={{width:"52%"}}>ชื่อเอกสาร</th>
+                      <th style={{width:"16%"}} className="right">บังคับแนบ</th>
+                      <th style={{width:"18%"}} className="right">หลายไฟล์</th>
+                      <th style={{width:"14%"}} className="right"></th>
+                    </tr></thead>
+                    <tbody>{dslots.map(s=>(
+                      <tr key={s.key}>
+                        <td>{s.label}{s.note&&<div className="muted" style={{fontSize:11}}>{s.note}</div>}</td>
+                        <td className="right">
+                          <label style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer"}}>
+                            <input type="checkbox" checked={!!s.required}
+                              onChange={e=>patchSlot(t,s.key,{required:e.target.checked})} style={{width:"auto",margin:0}}/>
+                            <span style={{fontSize:11.5,fontWeight:s.required?700:400,color:s.required?"#B03A2E":"#98A4AE"}}>
+                              {s.required?"บังคับ":"ไม่บังคับ"}</span>
+                          </label>
+                        </td>
+                        <td className="right">
+                          <label style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer"}}>
+                            <input type="checkbox" checked={!!s.multiple}
+                              onChange={e=>patchSlot(t,s.key,{multiple:e.target.checked})} style={{width:"auto",margin:0}}/>
+                            <span style={{fontSize:11.5,color:"#5A6672"}}>{s.multiple?"ได้":"ไฟล์เดียว"}</span>
+                          </label>
+                        </td>
+                        <td className="right">
+                          <button className="btn sm sec" style={{color:"#B03A2E"}} onClick={()=>delSlot(t,s.key)}>ลบ</button>
+                        </td>
+                      </tr>))}
+                    </tbody>
+                  </table>}
             </div>
 
             {schema.length===0
