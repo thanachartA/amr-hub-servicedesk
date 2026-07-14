@@ -6,6 +6,17 @@ import { supabase } from "../../../lib/supabaseClient";
 import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, deleteAttachment, signedUrls, isImage, fmtSize, fileIcon } from "../../../components/util";
 import { DynView } from "../../../components/DynForm";
 
+const APV_TH={
+  not_required:"ไม่ต้องอนุมัติ", pending_supervisor:"⏳ รอ Supervisor", pending_owner:"⏳ รอ Owner",
+  approved:"✅ อนุมัติแล้ว", rejected:"❌ ไม่อนุมัติ",
+};
+const APV_STYLE={
+  pending_supervisor:{background:"#FFF8E6",color:"#8A5A00",borderColor:"#EBD9AE"},
+  pending_owner:{background:"#FDECEE",color:"#B03A2E",borderColor:"#F3C9CE"},
+  approved:{background:"#E4F3EA",color:"#2E7D5B",borderColor:"#B7DEC8"},
+  rejected:{background:"#F2F4F6",color:"#5A6672"},
+};
+
 export default function RequestDetail(){
   const { id }=useParams();
   const [r,setR]=useState(null); const [exp,setExp]=useState([]); const [log,setLog]=useState([]);
@@ -13,6 +24,31 @@ export default function RequestDetail(){
   const [assignee,setAssignee]=useState(""); const [msg,setMsg]=useState(null);
   const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
   const [atts,setAtts]=useState([]); const [upBusy,setUpBusy]=useState(false); const [thumbs,setThumbs]=useState({});
+  // อนุมัติค่าใช้จ่าย 2 ชั้น
+  const [role,setRole]=useState(null); const [threshold,setThreshold]=useState(100000);
+  const [apvBusy,setApvBusy]=useState(null); const [expErr,setExpErr]=useState(null);
+  const names=Object.fromEntries(team.filter(x=>x.profiles).map(x=>[x.profiles.id, x.profiles.full_name]));
+
+  async function decide(x, action){
+    setExpErr(null);
+    let reason=null;
+    if(action==="reject"){
+      reason=prompt("เหตุผลที่ไม่อนุมัติ (จะแจ้งกลับผู้ขอ):","");
+      if(reason===null) return;
+    } else {
+      const nxt = Number(x.amount)>threshold && x.approval_status==="pending_supervisor"
+        ? "จะส่งต่อให้ Owner อนุมัติชั้นสุดท้าย" : "จะอนุมัติทันที (จบ loop)";
+      if(!confirm("อนุมัติ "+fmtMoney(x.amount)+" บาท ?\n\n"+nxt)) return;
+    }
+    setApvBusy(x.id);
+    const { data, error }=await supabase.rpc("hub_expense_decide",
+      { p_entry:x.id, p_action:action, p_reason:reason });
+    setApvBusy(null);
+    if(error){ setExpErr(error.message); return; }
+    setMsg(data==="pending_owner" ? "อนุมัติชั้น Supervisor แล้ว — ส่งต่อ Owner อนุมัติชั้นสุดท้าย"
+        : data==="approved" ? "อนุมัติเรียบร้อย" : "บันทึกไม่อนุมัติแล้ว");
+    load();
+  }
   const load=useCallback(async()=>{
     const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours,form_schema),requester:requester_id(full_name),assignee:assignee_id(full_name),suggested:suggested_assignee_id(full_name),project:project_id(code,name)").eq("id",id).single();
     setR(req); setAssignee(req?.assignee_id||"");
@@ -30,6 +66,9 @@ export default function RequestDetail(){
     setStaff((t||[]).some(x=>x.profiles?.id===u));
     setCanManage((t||[]).some(x=>x.profiles?.id===u && ["owner","supervisor"].includes(x.hub_role)));
     setCanAssign((t||[]).some(x=>x.profiles?.id===u && ["owner","lead","supervisor"].includes(x.hub_role)));
+    setRole((t||[]).find(x=>x.profiles?.id===u)?.hub_role || null);
+    const { data:s }=await supabase.from("hub_settings").select("value").eq("key","expense_approval_threshold").maybeSingle();
+    if(s?.value!=null) setThreshold(Number(s.value)||100000);
     load();
   })(); },[id]);
   if(!r) return <Shell title="คำขอ"><div className="muted">กำลังโหลด…</div></Shell>;
@@ -157,15 +196,48 @@ export default function RequestDetail(){
           </>)}
         </div>)}
 
-        {exp.length>0&&(<div className="card"><h2>ค่าใช้จ่ายโครงการ</h2>
-          <table><thead><tr><th>โครงการ</th><th>Cost Code</th><th className="right">จำนวนเงิน</th><th>อนุมัติ</th><th></th></tr></thead>
-          <tbody>{exp.map(x=>(<tr key={x.id}>
-            <td>{x.projects?<span>{x.projects.code} · {x.projects.name}</span>:<span className="muted">—</span>}</td>
-            <td>{x.hub_cost_codes?x.hub_cost_codes.code:"—"}</td>
-            <td className="right">{fmtMoney(x.amount)}</td>
-            <td><span className="tag">{x.approval_status}</span></td>
-            <td className="right">{canManage&&x.approval_status==="pending"&&<button className="btn sm" onClick={async()=>{await supabase.from("hub_expense_entries").update({approval_status:"approved",approved_by:uid}).eq("id",x.id);load();}}>อนุมัติ</button>}</td>
-          </tr>))}</tbody></table></div>)}
+        {exp.length>0&&(<div className="card"><h2>💰 ค่าใช้จ่าย & การอนุมัติ</h2>
+          <p className="muted" style={{fontSize:12,marginTop:-4,lineHeight:1.8}}>
+            ไม่เกิน <b>{fmtMoney(threshold)}</b> → Supervisor อนุมัติจบ ·
+            เกิน <b>{fmtMoney(threshold)}</b> → Supervisor ตรวจก่อน แล้ว<b>ส่งต่อ Owner</b>
+          </p>
+          {expErr&&<div className="err">{expErr}</div>}
+          <table><thead><tr>
+            <th>โครงการ</th><th>Cost Code</th><th className="right">จำนวนเงิน</th>
+            <th>สถานะอนุมัติ</th><th className="right">การดำเนินการ</th>
+          </tr></thead>
+          <tbody>{exp.map(x=>{
+            const st=x.approval_status;
+            const over=Number(x.amount)>threshold;
+            const canAct = (st==="pending_supervisor" && (role==="owner"||role==="supervisor"))
+                        || (st==="pending_owner" && role==="owner");
+            return (<tr key={x.id}>
+              <td>{x.projects?<span>{x.projects.code} · {x.projects.name}</span>:<span className="muted">—</span>}</td>
+              <td>{x.hub_cost_codes?x.hub_cost_codes.code:"—"}</td>
+              <td className="right"><b>{fmtMoney(x.amount)}</b>
+                {over&&<div style={{fontSize:10.5,color:"#B26A00"}}>เกินวงเงิน</div>}</td>
+              <td>
+                <span className="tag" style={APV_STYLE[st]||{}}>{APV_TH[st]||st}</span>
+                {x.supervisor_at&&<div className="muted" style={{fontSize:10.5,marginTop:3}}>
+                  Sup: {names[x.supervisor_by]||"—"} · {fmtDate(x.supervisor_at)}</div>}
+                {x.owner_at&&<div className="muted" style={{fontSize:10.5}}>
+                  Owner: {names[x.owner_by]||"—"} · {fmtDate(x.owner_at)}</div>}
+                {x.reject_reason&&<div style={{fontSize:10.5,color:"#B03A2E"}}>เหตุผล: {x.reject_reason}</div>}
+              </td>
+              <td className="right">
+                {canAct ? (<div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+                  <button className="btn sm" disabled={apvBusy===x.id} onClick={()=>decide(x,"approve")}>
+                    {apvBusy===x.id?"…":(st==="pending_owner"?"✅ อนุมัติ (Owner)":"✅ อนุมัติ")}
+                  </button>
+                  <button className="btn sm sec" style={{color:"#B03A2E"}} disabled={apvBusy===x.id}
+                    onClick={()=>decide(x,"reject")}>ไม่อนุมัติ</button>
+                </div>)
+                : st==="pending_owner" ? <span className="muted" style={{fontSize:11.5}}>รอ Owner</span>
+                : st==="pending_supervisor" ? <span className="muted" style={{fontSize:11.5}}>รอ Supervisor</span>
+                : <span className="muted">—</span>}
+              </td>
+            </tr>);
+          })}</tbody></table></div>)}
         <div className="card"><h2>Timeline</h2>
           {log.map(l=>(<div key={l.id} style={{padding:"7px 0",borderBottom:"1px solid #EEF1F3",fontSize:13}}>
             <b>{l.action}</b> {l.from_status&&l.to_status&&<span className="muted">{l.from_status} → {l.to_status}</span>} {l.note&&<span> · {l.note}</span>}
