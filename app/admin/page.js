@@ -16,6 +16,27 @@ export default function Admin(){
   const [impBusy,setImpBusy]=useState(false); const [impResult,setImpResult]=useState(null);
   // Form Builder
   const [editId,setEditId]=useState(null); const [draft,setDraft]=useState(null); const [prev,setPrev]=useState({}); const [saving,setSaving]=useState(false);
+  // วงเงินอนุมัติ (Owner เท่านั้น)
+  const [thr,setThr]=useState(""); const [thrSaved,setThrSaved]=useState(100000);
+  const [isOwner,setIsOwner]=useState(false); const [thrBusy,setThrBusy]=useState(false);
+  async function loadThreshold(){
+    const { data }=await supabase.from("hub_settings").select("value").eq("key","expense_approval_threshold").maybeSingle();
+    const v=Number(data?.value)||100000;
+    setThrSaved(v); setThr(String(v));
+  }
+  async function saveThreshold(){
+    const v=Number(String(thr).replace(/[,\s]/g,""));
+    if(isNaN(v)||v<0){ setMsg("วงเงินต้องเป็นตัวเลข"); return; }
+    setThrBusy(true);
+    const { data:sess }=await supabase.auth.getSession();
+    const { error }=await supabase.from("hub_settings")
+      .upsert({ key:"expense_approval_threshold", value:v, updated_by:sess.session.user.id,
+                updated_at:new Date().toISOString() },{onConflict:"key"});
+    setThrBusy(false);
+    if(error){ setMsg("บันทึกไม่สำเร็จ: "+error.message); return; }
+    setThrSaved(v); setMsg("ตั้งวงเงินอนุมัติเป็น "+v.toLocaleString("th-TH")+" บาท แล้ว");
+  }
+
   // นำเข้ารายชื่อพนักงาน (CSV)
   const [empBusy,setEmpBusy]=useState(false); const [empResult,setEmpResult]=useState(null);
   function empTemplate(){
@@ -215,7 +236,9 @@ export default function Admin(){
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession();
     const { data:t }=await supabase.from("hub_team").select("hub_role").eq("user_id",sess.session.user.id).maybeSingle();
-    setCanManage(["owner","supervisor"].includes(t?.hub_role)); setReady(true); load();
+    setCanManage(["owner","supervisor"].includes(t?.hub_role));
+    setIsOwner(t?.hub_role==="owner");
+    setReady(true); load(); loadThreshold();
   })(); },[]);
   async function setRole(uid, role){
     setMsg(null);
@@ -404,6 +427,30 @@ export default function Admin(){
         </tr>))}
           {!shownProjects.length&&<tr><td colSpan="4" className="muted">ไม่พบโครงการ</td></tr>}</tbody></table>
       </div>
+    </div>
+
+    <div className="card">
+      <h2>💰 วงเงินอนุมัติค่าใช้จ่าย (2 ชั้น)</h2>
+      <p className="muted" style={{fontSize:12.5,lineHeight:1.9,marginTop:-4}}>
+        คำขอที่มีค่าใช้จ่าย <b>ทุกใบ</b> ต้องผ่าน Supervisor ก่อนเสมอ<br/>
+        <b>ไม่เกินวงเงิน</b> → Supervisor อนุมัติจบ ·
+        <b> เกินวงเงิน</b> → Supervisor ตรวจแล้ว <b>ส่งต่อ Owner</b> อนุมัติชั้นสุดท้าย (มีแจ้งเตือนถึง Owner)
+      </p>
+      <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap",marginTop:10}}>
+        <div className="field" style={{marginBottom:0,maxWidth:220}}>
+          <label>วงเงิน (บาท)</label>
+          <input value={thr} onChange={e=>setThr(e.target.value)} disabled={!isOwner}
+            className="mono" style={{fontSize:16,fontWeight:700}}/>
+        </div>
+        {isOwner
+          ? <button className="btn sm" onClick={saveThreshold} disabled={thrBusy||String(Number(String(thr).replace(/[,\s]/g,"")))===String(thrSaved)}>
+              {thrBusy?"กำลังบันทึก…":"💾 บันทึกวงเงิน"}
+            </button>
+          : <span className="muted" style={{fontSize:12,paddingBottom:8}}>🔒 เฉพาะ Owner แก้ได้</span>}
+      </div>
+      <p className="muted" style={{fontSize:11.5,marginTop:8}}>
+        ปัจจุบัน: เกิน <b>{thrSaved.toLocaleString("th-TH")} บาท</b> ต้องให้ Owner อนุมัติ
+      </p>
     </div>
 
     <div className="card">
