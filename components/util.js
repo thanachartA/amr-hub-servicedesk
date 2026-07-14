@@ -27,9 +27,13 @@ export function fmtSize(b){ const n=Number(b)||0; if(n<1024) return n+" B"; if(n
 export function fileIcon(m){ const t=m||""; if(t.startsWith("image/")) return "🖼"; if(t.includes("pdf")) return "📕"; if(t.includes("sheet")||t.includes("excel")) return "📊"; if(t.includes("word")||t.includes("document")) return "📄"; return "📎"; }
 
 // อัปโหลดไฟล์เข้า storage + บันทึกลง hub_attachments — คืน array ของ error ที่เกิด
-export async function uploadAttachments(requestId, uid, files){
+// files: array ของ File  หรือ array ของ { file, slot_key }
+export async function uploadAttachments(requestId, uid, files, slotKey=null){
   const errs=[];
-  for(const f of (files||[])){
+  for(const item of (files||[])){
+    const f = item?.file || item;
+    const slot = item?.slot_key ?? slotKey;
+    if(!f) continue;
     if(f.size>ATT_MAX){ errs.push(f.name+" ใหญ่เกิน 10MB"); continue; }
     const ext=(f.name.split(".").pop()||"bin").toLowerCase().replace(/[^a-z0-9]/g,"");
     const path=requestId+"/"+Date.now()+"-"+Math.random().toString(36).slice(2,8)+"."+(ext||"bin");
@@ -37,11 +41,18 @@ export async function uploadAttachments(requestId, uid, files){
     if(error){ errs.push(f.name+": "+error.message); continue; }
     const { error:dbErr }=await supabase.from("hub_attachments").insert({
       request_id:requestId, uploaded_by:uid||null, file_name:f.name,
-      file_path:path, mime_type:f.type||null, size_bytes:f.size
+      file_path:path, mime_type:f.type||null, size_bytes:f.size, slot_key:slot||null
     });
     if(dbErr) errs.push(f.name+": "+dbErr.message);
   }
   return errs;
+}
+
+// เช็คว่าเอกสารบังคับครบหรือยัง — คืน array ของชื่อเอกสารที่ขาด
+export function missingDocs(slots, picked){
+  return (Array.isArray(slots)?slots:[])
+    .filter(s=>s.required && !(picked?.[s.key]?.length))
+    .map(s=>s.label);
 }
 export const isImage = m => (m||"").startsWith("image/");
 
