@@ -45,6 +45,14 @@ export default function FormBuilder({ schema, onChange }){
               <span className="muted" style={{fontWeight:400,marginLeft:8,fontSize:11}}>{TYPE_TH[f.type]||f.type}</span>
               {cond.field&&<span className="tag" style={{marginLeft:6,fontSize:10,background:"#EEF4FF",color:"#2D6CDF",borderColor:"#C7D9F7"}}>มีเงื่อนไข</span>}
             </b>
+            {/* สลับบังคับกรอกได้ทันที ไม่ต้องกดเข้าไปแก้ */}
+            <label style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",whiteSpace:"nowrap",marginRight:4}}
+              title="บังคับกรอก — ถ้าไม่กรอก ผู้ขอจะกดส่งไม่ได้">
+              <input type="checkbox" checked={!!f.required} onChange={e=>upd(i,{required:e.target.checked})} style={{width:"auto",margin:0}}/>
+              <span style={{fontSize:11.5,fontWeight:f.required?700:400,color:f.required?"#B03A2E":"#98A4AE"}}>
+                {f.required?"บังคับ":"ไม่บังคับ"}
+              </span>
+            </label>
             <button type="button" className="btn sm sec" onClick={()=>move(i,-1)} disabled={i===0} title="เลื่อนขึ้น">↑</button>
             <button type="button" className="btn sm sec" onClick={()=>move(i,1)} disabled={i===list.length-1} title="เลื่อนลง">↓</button>
             <button type="button" className="btn sm sec" onClick={()=>setOpen(isOpen?null:i)}>{isOpen?"ปิด":"แก้ไข"}</button>
