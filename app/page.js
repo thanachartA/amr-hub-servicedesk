@@ -9,10 +9,13 @@ const OPEN=["new","assigned","in_progress","waiting","review"];
 const dayKey=d=>new Date(d).toISOString().slice(0,10);
 
 export default function Dashboard(){
-  const [list,setList]=useState([]);
+  const [list,setList]=useState([]); const [my,setMy]=useState(null);
   useEffect(()=>{ (async()=>{
-    const { data }=await supabase.from("hub_requests").select("id,ticket_no,title,status,priority,sla_due_at,created_at,closed_at,csat_rating,assignee_id,hub_request_types(name),assignee:assignee_id(full_name)").order("created_at",{ascending:false}).limit(1000);
-    setList(data||[]);
+    const [{ data }, { data:d2 }]=await Promise.all([
+      supabase.from("hub_requests").select("id,ticket_no,title,status,priority,sla_due_at,created_at,closed_at,csat_rating,assignee_id,hub_request_types(name),assignee:assignee_id(full_name)").order("created_at",{ascending:false}).limit(1000),
+      supabase.rpc("hub_my_dashboard"),
+    ]);
+    setList(data||[]); setMy(d2||null);
   })(); },[]);
   const now=new Date();
   const total=list.length;
@@ -44,11 +47,37 @@ export default function Dashboard(){
     {n:slaPct+"%",l:"ทำทัน SLA",ic:"🎯",c:"#2D6CDF",bg:"#E7EEF7"},
     {n:csat==null?"—":csat.toFixed(1),l:"CSAT เฉลี่ย (เต็ม 5)",ic:"⭐",c:"#B26A00",bg:"#FFF4E0"},
   ];
+  // การ์ด "งานของฉัน" — actionable คลิกไปหน้าที่กรองแล้ว
+  const myCards = my ? [
+    { n:my.assigned_to_me, l:"งานที่ต้องทำ", ic:"🎯", c:"#E81828", bg:"#FDECEE", link:"/requests?view=mine", show:true },
+    { n:my.awaiting_review, l:"รอฉันตรวจ", ic:"🔎", c:"#7A5AF8", bg:"#EEEAFB", link:"/requests?view=review", show:["owner","supervisor","lead"].includes(my.role) },
+    { n:my.overdue, l:"เกิน SLA", ic:"⏰", c:"#E85D2A", bg:"#FCEAE1", link:"/requests?view=overdue", show:true },
+    { n:my.unassigned, l:"ยังไม่มอบหมาย", ic:"📥", c:"#B26A00", bg:"#FFF4E0", link:"/requests?view=unassigned", show:["owner","supervisor","lead"].includes(my.role) },
+    { n:my.pending_expense, l:"รอฉันอนุมัติเงิน", ic:"💰", c:"#2E7D5B", bg:"#E4F3EA", link:"/requests?view=review", show:["owner","supervisor"].includes(my.role) },
+  ].filter(c=>c.show) : [];
+
   return (<Shell title="Dashboard">
     <div className="hero">
       <div><h2>ภาพรวมระบบ Service Desk</h2><div className="sub">Central Admin Hub · AMR Asia — {now.toLocaleDateString("th-TH",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div></div>
       <div className="pill">{total} คำขอสะสม</div>
     </div>
+
+    {my&&myCards.length>0&&(<div style={{marginBottom:18}}>
+      <div style={{fontSize:13,fontWeight:700,color:"#5A6672",margin:"0 0 8px 2px"}}>⚡ สิ่งที่รอคุณอยู่</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12}}>
+        {myCards.map((c,i)=>(<a key={i} href={c.link} style={{textDecoration:"none",display:"block",
+          background:"#fff",border:"1px solid #E4E7EB",borderLeft:"4px solid "+c.c,borderRadius:10,padding:"12px 14px",
+          transition:"box-shadow .15s"}}
+          onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 14px rgba(0,0,0,.08)"}
+          onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:18,width:34,height:34,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8,background:c.bg}}>{c.ic}</span>
+            <div style={{fontSize:28,fontWeight:800,color:c.n>0?c.c:"#B4BBC2",lineHeight:1}}>{c.n}</div>
+          </div>
+          <div style={{fontSize:12.5,color:"#5A6672",marginTop:8}}>{c.l} <span style={{color:c.c}}>→</span></div>
+        </a>))}
+      </div>
+    </div>)}
     <div className="stats">
       {stats.map((s,i)=>(<div className="stat" key={i}>
         <div className="bar" style={{background:s.c}}/>
