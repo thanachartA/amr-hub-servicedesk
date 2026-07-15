@@ -51,6 +51,18 @@ export default function RequestDetail(){
         : data==="approved" ? "อนุมัติเรียบร้อย" : "บันทึกไม่อนุมัติแล้ว");
     load();
   }
+  async function markPosted(x){
+    setExpErr(null);
+    const on=!x.posted_to_erp;
+    if(!confirm(on
+      ? "ยืนยันว่าคีย์รายการนี้เข้า ERP แล้ว?\n\nยอดนี้จะไปนับจากฝั่ง ERP แทน (กันนับซ้ำในงบโครงการ)"
+      : "ยกเลิกสถานะ 'ลง ERP แล้ว' ?\n\nยอดนี้จะกลับมานับในงบฝั่ง Hub")) return;
+    setApvBusy(x.id);
+    const { error }=await supabase.from("hub_expense_entries").update({posted_to_erp:on}).eq("id",x.id);
+    setApvBusy(null);
+    if(error){ setExpErr(error.message); return; }
+    load();
+  }
   const load=useCallback(async()=>{
     const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours,form_schema,doc_slots),requester:requester_id(full_name),assignee:assignee_id(full_name),suggested:suggested_assignee_id(full_name),project:project_id(code,name)").eq("id",id).single();
     setR(req); setAssignee(req?.assignee_id||"");
@@ -333,6 +345,7 @@ export default function RequestDetail(){
                 {x.owner_at&&<div className="muted" style={{fontSize:10.5}}>
                   Owner: {names[x.owner_by]||"—"} · {fmtDate(x.owner_at)}</div>}
                 {x.reject_reason&&<div style={{fontSize:10.5,color:"#B03A2E"}}>เหตุผล: {x.reject_reason}</div>}
+                {st==="approved"&&x.posted_to_erp&&<div style={{fontSize:10.5,color:"#2E7D5B",marginTop:3}}>🧾 คีย์เข้า ERP แล้ว</div>}
               </td>
               <td className="right">
                 {canAct ? (<div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
@@ -344,6 +357,13 @@ export default function RequestDetail(){
                 </div>)
                 : st==="pending_owner" ? <span className="muted" style={{fontSize:11.5}}>รอ Owner</span>
                 : st==="pending_supervisor" ? <span className="muted" style={{fontSize:11.5}}>รอ Supervisor</span>
+                : st==="approved" && canManage ? (
+                    <button className="btn sm sec" disabled={apvBusy===x.id}
+                      onClick={()=>markPosted(x)}
+                      title="ทำเครื่องหมายว่าคีย์เข้า ERP แล้ว เพื่อกันนับซ้ำในงบ"
+                      style={x.posted_to_erp?{color:"#2E7D5B",borderColor:"#B7DEC8"}:{}}>
+                      {apvBusy===x.id?"…":(x.posted_to_erp?"🧾 ลง ERP แล้ว ✓":"ทำเครื่องหมายลง ERP")}
+                    </button>)
                 : <span className="muted">—</span>}
               </td>
             </tr>);
