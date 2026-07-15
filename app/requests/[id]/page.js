@@ -109,10 +109,31 @@ export default function RequestDetail(){
     notify(r.requester_id,"เปิดให้แก้ไขคำขอได้แล้ว",tk+" · "+ttl+" — หัวหน้ายกเลิกการมอบหมายเพื่อให้คุณแก้ไข",link,id);
   }
   async function doStart(){ const ch={status:"in_progress"}; if(!r.started_at) ch.started_at=new Date().toISOString(); await act("start",ch); }
-  async function doWaiting(){ await act("waiting",{status:"waiting"},"รอข้อมูล"); }
+  async function doWaiting(){
+    const note=prompt("รอข้อมูลอะไร? (แจ้งให้ผู้ขอทราบว่าต้องส่งอะไรเพิ่ม):","");
+    if(note===null) return;
+    if(!note.trim()){ setMsg("กรุณาระบุว่ารอข้อมูลอะไร"); return; }
+    await act("waiting",{status:"waiting",waiting_note:note.trim()},"รอข้อมูล: "+note.trim());
+    notify(r.requester_id,"งานของคุณรอข้อมูลเพิ่มเติม",tk+" · "+note.trim(),link,id);
+  }
   async function doSubmit(){
+    // ⛔ ต้องแนบไฟล์ผลงาน (PDF) ก่อนส่งตรวจ
+    const resultFiles=atts.filter(a=>a.slot_key==="result" || (a.mime_type||"").includes("pdf"));
+    if(resultFiles.length===0){
+      setMsg("⛔ ต้องแนบไฟล์ผลงาน (PDF เช่น หน้า OF / Billing) ก่อนส่งตรวจ — กด \"+ แนบผลงาน (PDF)\" ด้านล่าง");
+      window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"});
+      return;
+    }
     await act("submit_review",{status:"review",done_at:new Date().toISOString()},"ส่งตรวจ");
     notifyMany(leadIds,"มีงานรอตรวจ",tk+" · "+ttl,link,id);
+  }
+  async function addResult(e){
+    const fs=[...(e.target.files||[])]; if(!fs.length) return;
+    setUpBusy(true); setMsg(null);
+    const errs=await uploadAttachments(id, uid, fs, "result");
+    setUpBusy(false); e.target.value="";
+    setMsg(errs.length ? ("แนบไม่สำเร็จ: "+errs.join(" · ")) : "แนบไฟล์ผลงานแล้ว");
+    load();
   }
   async function doApprove(){
     await act("approve",{status:"closed",reviewed_by:uid,reviewed_at:new Date().toISOString(),closed_at:new Date().toISOString()},"อนุมัติและปิดงาน");
@@ -175,6 +196,9 @@ export default function RequestDetail(){
             {r.sla_due_at&&new Date(r.sla_due_at)<now&&!["review","closed","cancelled"].includes(r.status)&&<b style={{color:"#B03A2E"}}> · เกิน SLA</b>}</div>
           {r.review_note&&["in_progress","assigned","waiting"].includes(r.status)&&r.rework_count>0&&
             <div style={{marginTop:8,padding:"8px 10px",background:"#FBF1DE",borderRadius:6,fontSize:13,color:"#9A5B00"}}>ตีกลับให้แก้: {r.review_note}</div>}
+          {r.status==="waiting"&&r.waiting_note&&
+            <div style={{marginTop:8,padding:"8px 10px",background:"#FFF4E0",borderRadius:6,fontSize:13,color:"#8A5A00"}}>
+              ⏳ <b>ทีมงานรอข้อมูลเพิ่มเติม:</b> {r.waiting_note}</div>}
         </div>
 
         <div className="card">
@@ -354,11 +378,23 @@ export default function RequestDetail(){
               <button className="btn sm" style={{marginBottom:10,width:"100%"}} disabled={!assignee} onClick={doAssign}>มอบหมาย</button>
             </>}
 
-            {active&&(canAssign||isAssignee)&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-              <button className="btn sm sec" onClick={doStart}>เริ่มทำ</button>
-              <button className="btn sm sec" onClick={doWaiting}>รอข้อมูล</button>
-              <button className="btn sm" style={{gridColumn:"1 / span 2"}} onClick={doSubmit}>ส่งตรวจ ✓</button>
-            </div>}
+            {active&&(canAssign||isAssignee)&&(()=>{
+              const hasResult=atts.some(a=>a.slot_key==="result"||(a.mime_type||"").includes("pdf"));
+              return (<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                <button className="btn sm sec" onClick={doStart}>เริ่มทำ</button>
+                <button className="btn sm sec" onClick={doWaiting}>รอข้อมูล</button>
+                {/* แนบไฟล์ผลงาน (PDF) ก่อนส่งตรวจ */}
+                <label className="btn sm sec" style={{gridColumn:"1 / span 2",cursor:"pointer",margin:0,
+                  borderColor:hasResult?"#B7DEC8":"#EBD9AE",background:hasResult?"#F6FBF8":"#FFF8E6"}}>
+                  {upBusy?"กำลังอัปโหลด…":hasResult?"✅ แนบผลงานแล้ว — แนบเพิ่ม":"📎 แนบผลงาน (PDF) ก่อนส่งตรวจ *"}
+                  <input type="file" multiple accept=".pdf,image/*" disabled={upBusy} onChange={addResult} style={{display:"none"}}/>
+                </label>
+                <button className="btn sm" style={{gridColumn:"1 / span 2"}} disabled={!hasResult} onClick={doSubmit}
+                  title={hasResult?"":"ต้องแนบผลงาน (PDF) ก่อน"}>
+                  {hasResult?"ส่งตรวจ ✓":"🔒 ส่งตรวจ (แนบ PDF ก่อน)"}
+                </button>
+              </div>);
+            })()}
 
             {/* ยกเลิกมอบหมาย → เปิดให้ผู้ขอกลับมาแก้ไข */}
             {canAssign&&r.assignee_id&&["assigned","in_progress","waiting"].includes(r.status)&&(
