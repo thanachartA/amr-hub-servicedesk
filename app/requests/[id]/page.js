@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
 import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, deleteAttachment, signedUrls, isImage, fmtSize, fileIcon } from "../../../components/util";
-import { DynView } from "../../../components/DynForm";
+import DynForm, { DynView } from "../../../components/DynForm";
 
 const APV_TH={
   not_required:"ไม่ต้องอนุมัติ", pending_supervisor:"⏳ รอ Supervisor", pending_owner:"⏳ รอ Owner",
@@ -27,6 +27,8 @@ export default function RequestDetail(){
   // อนุมัติค่าใช้จ่าย 2 ชั้น
   const [role,setRole]=useState(null); const [threshold,setThreshold]=useState(100000);
   const [apvBusy,setApvBusy]=useState(null); const [expErr,setExpErr]=useState(null);
+  // แก้ไขคำขอ (ผู้ขอ ตอน new)
+  const [editing,setEditing]=useState(false); const [editDraft,setEditDraft]=useState({detail:"",form_data:{},priority:"normal"});
   const names=Object.fromEntries(team.filter(x=>x.profiles).map(x=>[x.profiles.id, x.profiles.full_name]));
 
   async function decide(x, action){
@@ -96,6 +98,16 @@ export default function RequestDetail(){
   }
   async function doAssign(){ await assignTo(assignee); }
   async function doAssignSuggested(){ await assignTo(r.suggested_assignee_id,"มอบหมายตามคำแนะนำระบบ"); }
+  // ยกเลิกมอบหมาย → กลับเป็น 'new' เพื่อให้ผู้ขอกลับมาแก้ไขได้
+  async function doUnassign(){
+    if(!confirm("ยกเลิกการมอบหมายงานนี้?\n\nงานจะกลับเป็น \"ใหม่\" และผู้ขอจะกลับมาแก้ไข/เพิ่มเอกสารได้อีกครั้ง")) return;
+    const prevAssignee=r.assignee_id;
+    await act("unassign",{assignee_id:null,status:"new",assigned_at:null,started_at:null},"ยกเลิกมอบหมาย — เปิดให้ผู้ขอแก้ไข");
+    await supabase.from("hub_assignments").update({is_current:false}).eq("request_id",id);
+    setAssignee("");
+    if(prevAssignee) notify(prevAssignee,"งานถูกยกเลิกการมอบหมาย",tk+" · "+ttl,link,id);
+    notify(r.requester_id,"เปิดให้แก้ไขคำขอได้แล้ว",tk+" · "+ttl+" — หัวหน้ายกเลิกการมอบหมายเพื่อให้คุณแก้ไข",link,id);
+  }
   async function doStart(){ const ch={status:"in_progress"}; if(!r.started_at) ch.started_at=new Date().toISOString(); await act("start",ch); }
   async function doWaiting(){ await act("waiting",{status:"waiting"},"รอข้อมูล"); }
   async function doSubmit(){
@@ -111,6 +123,18 @@ export default function RequestDetail(){
     if(note===null) return;
     await act("reject",{status:"in_progress",rework_count:(r.rework_count||0)+1,review_note:note},"ตีกลับแก้ไข: "+note);
     notify(r.assignee_id,"งานถูกตีกลับให้แก้ไข",tk+" · "+(note||""),link,id);
+  }
+  // ผู้ขอแก้เนื้อหาคำขอได้เฉพาะตอนยัง 'new' · staff แก้ได้ตลอด
+  const canEditRequest = (staff) || (uid===r.requester_id && r.status==="new");
+  const canAttach = staff || (uid===r.requester_id && r.status==="new");
+  async function saveEdit(){
+    setMsg(null);
+    const { error }=await supabase.from("hub_requests")
+      .update({ detail:editDraft.detail, form_data:editDraft.form_data, priority:editDraft.priority })
+      .eq("id",id);
+    if(error){ setMsg("บันทึกไม่สำเร็จ: "+error.message); return; }
+    await supabase.from("hub_activity_log").insert({request_id:id,actor_id:uid,action:"edit",from_status:r.status,to_status:r.status,note:"แก้ไขข้อมูลคำขอ"});
+    setEditing(false); setMsg("บันทึกการแก้ไขแล้ว"); load();
   }
   async function addFiles(e){
     const fs=[...(e.target.files||[])]; if(!fs.length) return;
@@ -154,8 +178,33 @@ export default function RequestDetail(){
         </div>
 
         <div className="card">
-          <h2>📋 ข้อมูลสำหรับดำเนินการ</h2>
-          <DynView schema={r.hub_request_types?.form_schema} data={r.form_data||{}}/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <h2 style={{margin:0}}>📋 ข้อมูลสำหรับดำเนินการ</h2>
+            {uid===r.requester_id && !editing && (
+              r.status==="new"
+                ? <button className="btn sm sec" onClick={()=>{ setEditDraft({detail:r.detail||"",form_data:{...(r.form_data||{})},priority:r.priority||"normal"}); setEditing(true); }}>✏️ แก้ไขคำขอ</button>
+                : <span className="muted" style={{fontSize:11.5}}>🔒 แก้ไขไม่ได้ (ถูกมอบหมายแล้ว)</span>
+            )}
+          </div>
+          {!editing
+            ? <DynView schema={r.hub_request_types?.form_schema} data={r.form_data||{}}/>
+            : (<div>
+                <div style={{background:"#FFF8E6",border:"1px solid #EBD9AE",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12.5,color:"#8A5A00"}}>
+                  แก้ไขได้เฉพาะตอนที่งานยัง "ใหม่" (ยังไม่ถูกมอบหมาย) — เมื่อบันทึกแล้วกด "ส่งใหม่" ไม่ต้อง
+                </div>
+                <DynForm schema={r.hub_request_types?.form_schema} data={editDraft.form_data}
+                  onChange={fd=>setEditDraft(d=>({...d,form_data:fd}))}/>
+                <div className="field"><label>ความเร่งด่วน</label>
+                  <select value={editDraft.priority} onChange={e=>setEditDraft(d=>({...d,priority:e.target.value}))}>
+                    <option value="low">ต่ำ</option><option value="normal">ปกติ</option><option value="high">สูง</option><option value="urgent">ด่วนมาก</option>
+                  </select></div>
+                <div className="field"><label>หมายเหตุเพิ่มเติม</label>
+                  <textarea value={editDraft.detail} onChange={e=>setEditDraft(d=>({...d,detail:e.target.value}))}/></div>
+                <div style={{display:"flex",gap:8}}>
+                  <button className="btn sm" onClick={saveEdit}>💾 บันทึกการแก้ไข</button>
+                  <button className="btn sm sec" onClick={()=>setEditing(false)}>ยกเลิก</button>
+                </div>
+              </div>)}
         </div>
 
         {slots.length>0&&(<div className="card">
@@ -188,15 +237,17 @@ export default function RequestDetail(){
         <div className="card">
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
             <h2 style={{margin:0}}>ไฟล์แนบทั้งหมด ({atts.length})</h2>
-            {(staff||uid===r.requester_id)&&<label className="btn sm sec" style={{cursor:"pointer",margin:0}}>
-              {upBusy?"กำลังอัปโหลด…":"+ แนบไฟล์"}
-              <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv" disabled={upBusy}
-                onChange={addFiles} style={{display:"none"}}/>
-            </label>}
+            {canAttach
+              ? <label className="btn sm sec" style={{cursor:"pointer",margin:0}}>
+                  {upBusy?"กำลังอัปโหลด…":"+ แนบไฟล์"}
+                  <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv" disabled={upBusy}
+                    onChange={addFiles} style={{display:"none"}}/>
+                </label>
+              : (uid===r.requester_id && <span className="muted" style={{fontSize:11.5}}>🔒 แนบ/ลบไม่ได้ (ถูกมอบหมายแล้ว)</span>)}
           </div>
           {atts.length===0&&<div className="muted" style={{fontSize:13}}>ยังไม่มีไฟล์แนบ</div>}
           <div style={{display:"grid",gap:6}}>
-            {atts.map(a=>{ const canDel = canManage || a.uploaded_by===uid; const th=thumbs[a.file_path];
+            {atts.map(a=>{ const canDel = canManage || (a.uploaded_by===uid && (staff || r.status==="new")); const th=thumbs[a.file_path];
               return (<div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,background:"#F6F7F9",border:"1px solid #E4E7EB",borderRadius:8,padding:"8px 12px"}}>
               <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
                 {th
@@ -308,6 +359,17 @@ export default function RequestDetail(){
               <button className="btn sm sec" onClick={doWaiting}>รอข้อมูล</button>
               <button className="btn sm" style={{gridColumn:"1 / span 2"}} onClick={doSubmit}>ส่งตรวจ ✓</button>
             </div>}
+
+            {/* ยกเลิกมอบหมาย → เปิดให้ผู้ขอกลับมาแก้ไข */}
+            {canAssign&&r.assignee_id&&["assigned","in_progress","waiting"].includes(r.status)&&(
+              <div style={{marginTop:10,paddingTop:10,borderTop:"1px dashed #E4E7EB"}}>
+                <button className="btn sm sec" style={{width:"100%",color:"#B03A2E"}} onClick={doUnassign}>
+                  ↩ ยกเลิกมอบหมาย (เปิดให้ผู้ขอแก้ไข)
+                </button>
+                <div className="muted" style={{fontSize:11,marginTop:4,lineHeight:1.6}}>
+                  งานจะกลับเป็น "ใหม่" · ผู้ขอกลับมาแก้ไข/เพิ่มเอกสาร แล้วส่งอีกครั้ง
+                </div>
+              </div>)}
 
             {r.status==="review"&&<div style={{marginTop:4}}>
               {canAssign?<>
