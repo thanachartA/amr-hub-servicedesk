@@ -26,13 +26,22 @@ export default function NewRequest(){
   const [files,setFiles]=useState([]);          // เอกสารอื่น ๆ (ไม่เข้าช่อง)
   const [docs,setDocs]=useState({});            // { slot_key: [File,...] }
   const [fd,setFd]=useState({});
+  const [bud,setBud]=useState(null);            // งบเหลือของโครงการที่เลือก
   useEffect(()=>{ (async()=>{
     const [t,p,c]=await Promise.all([
       supabase.from("hub_request_types").select("*").eq("is_active",true).order("sort_order"),
-      supabase.from("projects").select("id,code,name,budget_amount").order("code").limit(500),
+      supabase.from("projects").select("id,code,name,budget_amount").order("code").limit(2000),
       supabase.from("hub_cost_codes").select("*").eq("is_active",true).order("code")]);
     setTypes(t.data||[]); setProjects(p.data||[]); setCodes(c.data||[]);
   })(); },[]);
+  // โหลดงบคงเหลือเมื่อเลือกโครงการ
+  useEffect(()=>{ (async()=>{
+    if(!form.project){ setBud(null); return; }
+    const { data }=await supabase.rpc("hub_project_budget_left",{ p_project:form.project });
+    setBud(data||null);
+  })(); },[form.project]);
+  const amt=Number(String(form.amount).replace(/[,\s]/g,""))||0;
+  const overBudget = bud?.has_budget && amt>0 && amt > Number(bud.left);
   const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
   function up(k,v){ setForm(s=>({...s,[k]:v})); if(k==="type"){ setDocs({}); setFiles([]); setFd({}); } }
   async function submit(e){ e.preventDefault(); setErr(null);
@@ -48,6 +57,11 @@ export default function NewRequest(){
     const nDocs=Object.values(docs).reduce((s,a)=>s+a.length,0);
     if(sel?.require_attachment && nDocs===0 && files.length===0){
       setErr("งานประเภทนี้ต้องแนบเอกสารหลักฐานอย่างน้อย 1 ไฟล์");
+      window.scrollTo({top:0,behavior:"smooth"}); return;
+    }
+    // ⛔ งบโครงการไม่พอ → ส่งไม่ได้
+    if(overBudget){
+      setErr("งบโครงการไม่พอ — งบคงเหลือ "+fmtMoney(bud.left)+" แต่ขอเบิก "+fmtMoney(amt)+" (เกิน "+fmtMoney(amt-Number(bud.left))+")");
       window.scrollTo({top:0,behavior:"smooth"}); return;
     }
     setBusy(true);
@@ -124,16 +138,30 @@ export default function NewRequest(){
             <div className="field"><label>Cost Code</label>
               <select value={form.cost} onChange={e=>up("cost",e.target.value)}>
                 <option value="">— เลือก —</option>{codes.map(c=>(<option key={c.id} value={c.id}>{c.code} · {c.name}</option>))}</select></div>
-            <div className="field"><label>จำนวนเงิน (บาท)</label><input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0"/></div>
+            <div className="field"><label>จำนวนเงิน (บาท)</label>
+              <input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0"
+                style={overBudget?{borderColor:"#B03A2E",boxShadow:"0 0 0 3px rgba(176,58,46,.12)"}:undefined}/>
+              {overBudget&&<div style={{fontSize:11.5,color:"#B03A2E",fontWeight:700,marginTop:4}}>
+                🚫 เกินงบคงเหลือ {fmtMoney(amt-Number(bud.left))}</div>}
+            </div>
           </div>
-          {Number(form.amount)>THRESHOLD&&<div className="muted" style={{color:"#B26A00"}}>⚠ ยอด &gt; 100,000 — ต้องขออนุมัติเพิ่มก่อนตัดยอด</div>}
+          {/* งบคงเหลือของโครงการ */}
+          {bud&&form.project&&(bud.has_budget
+            ? <div style={{marginTop:6,padding:"8px 12px",borderRadius:8,fontSize:12.5,
+                background:overBudget?"#FDECEE":"#EEF6FF",border:"1px solid "+(overBudget?"#F3C9CE":"#C7D9F7")}}>
+                งบโครงการ <b>{fmtMoney(bud.budget)}</b> · ใช้ไปแล้ว <b>{fmtMoney(Math.max(Number(bud.used),Number(bud.erp)))}</b> ·
+                คงเหลือ <b style={{color:Number(bud.left)<=0?"#B03A2E":"#2E7D5B"}}>{fmtMoney(bud.left)}</b>
+                {overBudget&&<div style={{color:"#B03A2E",fontWeight:700,marginTop:3}}>⛔ งบไม่พอ — ส่งคำขอไม่ได้ ต้องลดยอดหรือเปลี่ยนโครงการ</div>}
+              </div>
+            : <div className="muted" style={{fontSize:11.5,marginTop:6}}>โครงการนี้ยังไม่ได้ตั้งงบประมาณ (ไม่เช็คงบ)</div>)}
+          {Number(form.amount)>THRESHOLD&&<div className="muted" style={{color:"#B26A00",marginTop:6}}>⚠ ยอด &gt; {fmtMoney(THRESHOLD)} — ต้องผ่านการอนุมัติ Owner</div>}
         </div>)}
         {sel&&<DocSlots slots={sel.doc_slots} picked={docs} onChange={setDocs}
           extra={files} onExtra={setFiles} formData={fd}/>}
         <div className="muted" style={{fontSize:11,marginTop:-6,marginBottom:12}}>
           รูป / PDF / Word / Excel · สูงสุด 10MB ต่อไฟล์
         </div>
-        <button className="btn" disabled={busy}>{busy?"กำลังส่ง…":"ส่งคำขอ"}</button>
+        <button className="btn" disabled={busy||overBudget}>{busy?"กำลังส่ง…":overBudget?"⛔ งบไม่พอ — ส่งไม่ได้":"ส่งคำขอ"}</button>
       </form>
     </div>
   </Shell>);
