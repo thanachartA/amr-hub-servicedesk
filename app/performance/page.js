@@ -59,7 +59,7 @@ export default function Performance(){
   return (<Shell title="Performance รายบุคคล">
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
       <div style={{display:"flex",gap:8}}>
-        {[["30","30 วัน"],["90","90 วัน"],["all","ทั้งหมด"]].map(([v,l])=>(
+        {[["30","เดือนนี้ (30 วัน)"],["90","ไตรมาส (90 วัน)"],["all","ทั้งหมด"]].map(([v,l])=>(
           <button key={v} className={"btn sm "+(period===v?"":"sec")} onClick={()=>setPeriod(v)}>{l}</button>))}
       </div>
       <button className="btn sm sec" onClick={exportCSV}>⬇ Export CSV</button>
