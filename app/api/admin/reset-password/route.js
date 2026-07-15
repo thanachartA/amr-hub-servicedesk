@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { randomInt } from "crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,11 +9,11 @@ const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY; // server-only
 
 function genTempPassword(){
   const U="ABCDEFGHJKLMNPQRSTUVWXYZ", L="abcdefghijkmnpqrstuvwxyz", D="23456789", S="!@#$%*";
-  const pick = s => s[Math.floor(Math.random()*s.length)];
+  const pick = s => s[randomInt(s.length)]; // crypto-secure (ไม่ใช่ Math.random)
   const out = [pick(U), pick(U), pick(L), pick(L), pick(L), pick(D), pick(D), pick(D), pick(S)];
   const all = U+L+D;
   while(out.length < 12) out.push(pick(all));
-  for(let i=out.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=out[i]; out[i]=out[j]; out[j]=t; }
+  for(let i=out.length-1;i>0;i--){ const j=randomInt(i+1); const t=out[i]; out[i]=out[j]; out[j]=t; }
   return out.join("");
 }
 
