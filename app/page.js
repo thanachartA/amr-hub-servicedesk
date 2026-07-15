@@ -34,18 +34,18 @@ export default function Dashboard(){
   const cc={}; list.forEach(r=>{ if(r.created_at){const k=dayKey(r.created_at); cc[k]=(cc[k]||0)+1;} });
   const trend=days.map(d=>({label:d.k,short:d.short,value:cc[d.k]||0}));
   const tc={}; list.forEach(r=>{ const n=r.hub_request_types?.name||"อื่นๆ"; tc[n]=(tc[n]||0)+1; });
-  const palette=["#E81828","#2D6CDF","#0E9AA6","#F5A623","#7A5AF8","#23A55A"];
+  const palette=["#EA0029","#2453A8","#0FA3B1","#E8A200","#6B4EF0","#1F9D57"];
   const topTypes=Object.entries(tc).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([label,value],i)=>({label,value,color:palette[i%6]}));
   const wl={}; list.filter(r=>OPEN.includes(r.status)&&r.assignee_id).forEach(r=>{ const n=r.assignee?.full_name||"—"; wl[n]=(wl[n]||0)+1; });
-  const workload=Object.entries(wl).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([label,value])=>({label,value,color:value>6?"#E85D2A":"#0E9AA6"}));
+  const workload=Object.entries(wl).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([label,value])=>({label,value,color:value>6?"#E5602A":"#0FA3B1"}));
 
   const stats=[
-    {n:open,l:"งานที่เปิดอยู่",ic:"📋",c:"#E81828",bg:"#FDECEE"},
-    {n:breach,l:"เกิน SLA",ic:"⏰",c:"#E85D2A",bg:"#FCEAE1"},
-    {n:review,l:"รอตรวจ",ic:"🔎",c:"#7A5AF8",bg:"#EEEAFB"},
-    {n:closed7,l:"เสร็จใน 7 วัน",ic:"✅",c:"#23A55A",bg:"#E4F3EA"},
-    {n:slaPct+"%",l:"ทำทัน SLA",ic:"🎯",c:"#2D6CDF",bg:"#E7EEF7"},
-    {n:csat==null?"—":csat.toFixed(1),l:"CSAT เฉลี่ย (เต็ม 5)",ic:"⭐",c:"#B26A00",bg:"#FFF4E0"},
+    {n:open,l:"งานที่เปิดอยู่",ic:"📋",c:"#EA0029",bg:"#FDE7EC"},
+    {n:breach,l:"เกิน SLA",ic:"⏰",c:"#E5602A",bg:"#FCEAE1"},
+    {n:review,l:"รอตรวจ",ic:"🔎",c:"#6B4EF0",bg:"#ECEAFB"},
+    {n:closed7,l:"เสร็จใน 7 วัน",ic:"✅",c:"#1F9D57",bg:"#E3F4EA"},
+    {n:slaPct+"%",l:"ทำทัน SLA",ic:"🎯",c:"#052460",bg:"#E4EAF5"},
+    {n:csat==null?"—":csat.toFixed(1),l:"CSAT เฉลี่ย (เต็ม 5)",ic:"⭐",c:"#C77700",bg:"#FFF3DE"},
   ];
   // การ์ด "งานของฉัน" — actionable คลิกไปหน้าที่กรองแล้ว
   const myCards = my ? [
