@@ -1,5 +1,6 @@
 import "./globals.css";
 import RegisterSW from "../components/RegisterSW";
+import NoWheelNumber from "../components/NoWheelNumber";
 
 export const metadata = {
   title: "AMR Central Admin Hub — Service Desk",
@@ -10,5 +11,5 @@ export const metadata = {
 export const viewport = { themeColor: "#202028" };
 
 export default function RootLayout({ children }) {
-  return (<html lang="th"><body>{children}<RegisterSW/></body></html>);
+  return (<html lang="th"><body>{children}<RegisterSW/><NoWheelNumber/></body></html>);
 }
