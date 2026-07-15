@@ -65,7 +65,7 @@ export default function Login(){
         <div className="field"><label>รหัสผ่าน</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="รหัสผ่าน"/></div>
         <button className="btn" style={{width:"100%"}} disabled={busy||!email||!pw}>{busy?"กำลังเข้า…":"เข้าสู่ระบบ"}</button>
         <div style={{display:"flex",justifyContent:"space-between",marginTop:12,fontSize:13}}>
-          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("signup");}} style={{color:"#E81828"}}>ตั้งรหัสผ่านครั้งแรก</a>
+          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("signup");}} style={{color:"#EA0029"}}>ตั้งรหัสผ่านครั้งแรก</a>
           <a href="#" onClick={e=>{e.preventDefault();forgot();}} style={{color:"#5A6672"}}>ลืมรหัสผ่าน?</a>
         </div>
         <div style={{textAlign:"center",marginTop:10}}>
@@ -81,7 +81,7 @@ export default function Login(){
         <div className="field"><label>ยืนยันรหัสผ่าน</label><input type="password" value={pw2} onChange={e=>setPw2(e.target.value)} placeholder="พิมพ์รหัสผ่านอีกครั้ง"/></div>
         <button className="btn" style={{width:"100%"}} disabled={busy||!email||!pw||!pw2}>{busy?"กำลังตั้ง…":"ตั้งรหัสผ่านและเข้าใช้งาน"}</button>
         <div style={{textAlign:"center",marginTop:12}}>
-          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("pw");}} style={{fontSize:13,color:"#E81828"}}>← มีรหัสผ่านแล้ว เข้าสู่ระบบ</a>
+          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("pw");}} style={{fontSize:13,color:"#EA0029"}}>← มีรหัสผ่านแล้ว เข้าสู่ระบบ</a>
         </div>
       </form>
     )}
@@ -91,7 +91,7 @@ export default function Login(){
         <div className="field"><label>อีเมลบริษัท</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@amrasia.com" autoFocus/></div>
         <button className="btn" style={{width:"100%"}} disabled={busy||!email}>{busy?"กำลังส่ง…":"ส่งลิงก์เข้าสู่ระบบ"}</button>
         <div style={{textAlign:"center",marginTop:12}}>
-          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("pw");}} style={{fontSize:13,color:"#E81828"}}>← กลับไปเข้าด้วยรหัสผ่าน</a>
+          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("pw");}} style={{fontSize:13,color:"#EA0029"}}>← กลับไปเข้าด้วยรหัสผ่าน</a>
         </div>
       </form>
     )}
