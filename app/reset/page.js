@@ -35,7 +35,7 @@ export default function Reset(){
       <b>คุณกำลังใช้รหัสผ่านชั่วคราวที่ผู้ดูแลระบบตั้งให้</b><br/>กรุณาตั้งรหัสผ่านของคุณเองก่อนเข้าใช้งาน
     </div>}
     {err&&<div className="err">{err}</div>}{msg&&<div className="ok">{msg}</div>}
-    {ready && !ok && <div className="muted" style={{textAlign:"center",lineHeight:1.7}}>ลิงก์ไม่ถูกต้องหรือหมดอายุ<br/>กลับไปที่ <a href="/login" style={{color:"#E81828"}}>หน้าเข้าสู่ระบบ</a> แล้วกด "ลืมรหัสผ่าน" อีกครั้ง</div>}
+    {ready && !ok && <div className="muted" style={{textAlign:"center",lineHeight:1.7}}>ลิงก์ไม่ถูกต้องหรือหมดอายุ<br/>กลับไปที่ <a href="/login" style={{color:"#EA0029"}}>หน้าเข้าสู่ระบบ</a> แล้วกด "ลืมรหัสผ่าน" อีกครั้ง</div>}
     {ok && (<form onSubmit={save}>
       <div className="field"><label>รหัสผ่านใหม่</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="อย่างน้อย 8 ตัวอักษร" autoFocus/></div>
       <div className="field"><label>ยืนยันรหัสผ่านใหม่</label><input type="password" value={pw2} onChange={e=>setPw2(e.target.value)} placeholder="พิมพ์รหัสผ่านอีกครั้ง"/></div>
