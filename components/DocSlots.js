@@ -1,11 +1,11 @@
 "use client";
-import { fmtSize, fileIcon, ATT_MAX } from "./util";
+import { fmtSize, fileIcon, ATT_MAX, docVisible } from "./util";
 
 // ช่องแนบเอกสารแยกทีละรายการ ตาม doc_slots ของประเภทงาน
-// slots : [{key,label,required,multiple,note}]
-// picked: { slot_key: [File, ...] }
-export default function DocSlots({ slots, picked, onChange, extra=[], onExtra }){
-  const list = Array.isArray(slots) ? slots : [];
+// slots : [{key,label,required,multiple,note,show_if}]
+// picked: { slot_key: [File, ...] } · formData: ค่าฟอร์ม (สำหรับ show_if)
+export default function DocSlots({ slots, picked, onChange, extra=[], onExtra, formData={} }){
+  const list = (Array.isArray(slots) ? slots : []).filter(s=>docVisible(s, formData));
   const need = list.filter(s=>s.required);
   const done = need.filter(s=>picked?.[s.key]?.length).length;
   const allOk = done === need.length;

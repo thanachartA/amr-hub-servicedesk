@@ -48,10 +48,18 @@ export async function uploadAttachments(requestId, uid, files, slotKey=null){
   return errs;
 }
 
-// เช็คว่าเอกสารบังคับครบหรือยัง — คืน array ของชื่อเอกสารที่ขาด
-export function missingDocs(slots, picked){
+// เอกสารช่องนี้ควรแสดงมั้ย (รองรับเงื่อนไข show_if ที่อิงค่าในฟอร์ม)
+export function docVisible(slot, formData){
+  const c=slot?.show_if;
+  if(!c || !c.field) return true;
+  const v=formData?.[c.field];
+  if(typeof c.equals==="boolean") return !!v===c.equals;
+  return String(v??"")===String(c.equals);
+}
+// เช็คว่าเอกสารบังคับครบหรือยัง — ข้ามช่องที่ถูกซ่อน (show_if ไม่ผ่าน)
+export function missingDocs(slots, picked, formData){
   return (Array.isArray(slots)?slots:[])
-    .filter(s=>s.required && !(picked?.[s.key]?.length))
+    .filter(s=>s.required && docVisible(s, formData) && !(picked?.[s.key]?.length))
     .map(s=>s.label);
 }
 export const isImage = m => (m||"").startsWith("image/");
