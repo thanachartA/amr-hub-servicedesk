@@ -6,6 +6,7 @@ import { supabase } from "../../../lib/supabaseClient";
 import { notifyMany, uploadAttachments, fmtSize, fileIcon, missingDocs } from "../../../components/util";
 import DynForm, { missingFields } from "../../../components/DynForm";
 import DocSlots from "../../../components/DocSlots";
+import Combobox from "../../../components/Combobox";
 
 const THRESHOLD=100000;
 const CAT={ finance:{label:"💰 การเงิน & เบิกจ่าย",order:1}, procurement:{label:"🛒 จัดซื้อ & Vendor",order:2}, ga:{label:"🏢 ธุรการ & ยานพาหนะ",order:3} };
@@ -38,8 +39,8 @@ export default function NewRequest(){
     // ⛔ บังคับกรอกให้ครบก่อนส่ง
     const miss=missingFields(sel?.form_schema, fd);
     if(miss.length){ setErr("กรอกข้อมูลไม่ครบ — ยังขาด: "+miss.join(" · ")); window.scrollTo({top:0,behavior:"smooth"}); return; }
-    // ⛔ เอกสารบังคับต้องครบทุกช่อง
-    const miss2=missingDocs(sel?.doc_slots, docs);
+    // ⛔ เอกสารบังคับต้องครบทุกช่อง (รวมเอกสารเงื่อนไข เช่น จ่ายนอกรอบ)
+    const miss2=missingDocs(sel?.doc_slots, docs, fd);
     if(miss2.length){
       setErr("เอกสารยังไม่ครบ — ยังขาด: "+miss2.join(" · "));
       window.scrollTo({top:0,behavior:"smooth"}); return;
@@ -108,11 +109,13 @@ export default function NewRequest(){
         </div>
         <div className="field">
           <label>โครงการ / รหัสโครงการ {needExpense&&<span style={{color:"#B03A2E"}}>*</span>}</label>
-          <select value={form.project} onChange={e=>up("project",e.target.value)} required={!!needExpense}>
-            <option value="">— ไม่ระบุโครงการ —</option>
-            {projects.map(p=>(<option key={p.id} value={p.id}>{p.code} · {p.name}</option>))}
-          </select>
-          <div className="muted" style={{fontSize:11,marginTop:4}}>ระบุโครงการ = ระบบจะส่งงานให้ <b>เจ้าประจำโครงการ</b> นั้นโดยตรง (แม่นกว่าเดาจากประเภทงาน)</div>
+          <Combobox
+            options={projects.map(p=>({value:p.id, label:(p.code||"")+" · "+(p.name||""), sub:p.name}))}
+            value={form.project} onChange={v=>up("project",v)}
+            required={!!needExpense}
+            placeholder="🔎 พิมพ์รหัส/ชื่อโครงการเพื่อค้นหา"
+            emptyLabel="— ไม่ระบุโครงการ —"/>
+          <div className="muted" style={{fontSize:11,marginTop:4}}>พิมพ์รหัสหรือชื่อโครงการเพื่อค้นหา · ระบุโครงการ = ระบบส่งงานให้ <b>เจ้าประจำโครงการ</b> โดยตรง</div>
         </div>
 
         {needExpense&&(<div style={{background:"#E4F3EA",border:"1px solid #B7DEC8",borderRadius:10,padding:14,marginBottom:14}}>
@@ -126,7 +129,7 @@ export default function NewRequest(){
           {Number(form.amount)>THRESHOLD&&<div className="muted" style={{color:"#B26A00"}}>⚠ ยอด &gt; 100,000 — ต้องขออนุมัติเพิ่มก่อนตัดยอด</div>}
         </div>)}
         {sel&&<DocSlots slots={sel.doc_slots} picked={docs} onChange={setDocs}
-          extra={files} onExtra={setFiles}/>}
+          extra={files} onExtra={setFiles} formData={fd}/>}
         <div className="muted" style={{fontSize:11,marginTop:-6,marginBottom:12}}>
           รูป / PDF / Word / Excel · สูงสุด 10MB ต่อไฟล์
         </div>
