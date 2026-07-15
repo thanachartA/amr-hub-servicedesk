@@ -76,12 +76,12 @@ export default function Shell({ children, title }) {
           <h1>{title}</h1>
           <div style={{position:"relative"}}>
             <button onClick={()=>setOpen(o=>!o)} style={{position:"relative",background:"#fff",border:"1px solid #DDE3E8",borderRadius:8,padding:"7px 11px",cursor:"pointer",fontSize:16}} aria-label="แจ้งเตือน">🔔
-              {unread>0&&<span style={{position:"absolute",top:-6,right:-6,background:"#E81828",color:"#fff",borderRadius:10,fontSize:11,minWidth:18,height:18,lineHeight:"18px",padding:"0 4px",fontWeight:700}}>{unread}</span>}
+              {unread>0&&<span style={{position:"absolute",top:-6,right:-6,background:"#EA0029",color:"#fff",borderRadius:10,fontSize:11,minWidth:18,height:18,lineHeight:"18px",padding:"0 4px",fontWeight:700}}>{unread}</span>}
             </button>
             {open&&<div style={{position:"absolute",right:0,top:44,width:340,background:"#fff",border:"1px solid #DDE3E8",borderRadius:10,boxShadow:"0 8px 28px rgba(0,0,0,.12)",zIndex:50,overflow:"hidden"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderBottom:"1px solid #EEF1F3"}}>
                 <b style={{fontSize:13}}>การแจ้งเตือน</b>
-                {unread>0&&<a href="#" onClick={e=>{e.preventDefault();markAll();}} style={{fontSize:12,color:"#E81828"}}>อ่านทั้งหมด</a>}
+                {unread>0&&<a href="#" onClick={e=>{e.preventDefault();markAll();}} style={{fontSize:12,color:"#EA0029"}}>อ่านทั้งหมด</a>}
               </div>
               <div style={{maxHeight:380,overflowY:"auto"}}>
                 {notifs.length===0&&<div style={{padding:"18px 14px",color:"#5A6672",fontSize:13}}>ยังไม่มีการแจ้งเตือน</div>}
