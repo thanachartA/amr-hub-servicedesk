@@ -6,13 +6,29 @@ import { StatusBadge, fmtDate, downloadCSV } from "../../components/util";
 
 const TH={new:"ใหม่",assigned:"มอบหมายแล้ว",in_progress:"กำลังทำ",waiting:"รอข้อมูล",review:"รอตรวจ",done:"เสร็จ",closed:"ปิด",cancelled:"ยกเลิก"};
 
+const OPEN2=["new","assigned","in_progress","waiting","review"];
 export default function Requests(){
-  const [rows,setRows]=useState([]); const [f,setF]=useState("open");
+  const [rows,setRows]=useState([]); const [f,setF]=useState("open"); const [uid,setUid]=useState(null);
+  // มุมมองพิเศษจาก Dashboard (?view=mine / overdue / unassigned / review)
+  const [view,setView]=useState(null);
+  useEffect(()=>{
+    const v=new URLSearchParams(window.location.search).get("view");
+    if(v) setView(v);
+  },[]);
   useEffect(()=>{ (async()=>{
-    let q=supabase.from("hub_requests").select("id,ticket_no,title,status,priority,sla_due_at,created_at,rework_count,hub_request_types(name),requester:requester_id(full_name),assignee:assignee_id(full_name)").order("created_at",{ascending:false}).limit(500);
+    const { data:sess }=await supabase.auth.getSession(); setUid(sess?.session?.user?.id||null);
+    let q=supabase.from("hub_requests").select("id,ticket_no,title,status,priority,sla_due_at,created_at,rework_count,assignee_id,hub_request_types(name),requester:requester_id(full_name),assignee:assignee_id(full_name)").order("created_at",{ascending:false}).limit(500);
     const { data }=await q; setRows(data||[]);
   })(); },[]);
-  const shown=rows.filter(r=> f==="all"?true : f==="open"?!["closed","cancelled"].includes(r.status) : r.status===f);
+  const now=new Date();
+  const shown=rows.filter(r=>{
+    if(view==="mine")       return r.assignee_id===uid && OPEN2.includes(r.status);
+    if(view==="overdue")    return r.sla_due_at && new Date(r.sla_due_at)<now && !["review","closed","cancelled"].includes(r.status);
+    if(view==="unassigned") return r.status==="new" && !r.assignee_id;
+    if(view==="review")     return r.status==="review";
+    return f==="all"?true : f==="open"?!["closed","cancelled"].includes(r.status) : r.status===f;
+  });
+  const viewLabel={mine:"งานที่มอบหมายให้ฉัน",overdue:"เกิน SLA",unassigned:"ยังไม่มอบหมาย",review:"รอตรวจ"}[view];
   function exportCSV(){
     downloadCSV("service-desk_"+new Date().toISOString().slice(0,10)+".csv",[
       {label:"Ticket",key:"ticket_no"},
@@ -29,9 +45,14 @@ export default function Requests(){
   }
   return (<Shell title="คำขอทั้งหมด">
     <div className="card">
-      <div style={{marginBottom:12,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+      {view&&<div style={{marginBottom:12,display:"flex",alignItems:"center",gap:10,background:"#EEF4FF",border:"1px solid #C7D9F7",borderRadius:8,padding:"8px 12px"}}>
+        <b style={{color:"#2D6CDF",fontSize:13}}>🔎 กรอง: {viewLabel}</b>
+        <span className="muted" style={{fontSize:12}}>{shown.length} รายการ</span>
+        <button className="btn sm sec" style={{marginLeft:"auto"}} onClick={()=>setView(null)}>ล้างตัวกรอง</button>
+      </div>}
+      <div style={{marginBottom:12,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",opacity:view?0.5:1}}>
         {[["open","เปิดอยู่"],["all","ทั้งหมด"],["new","ใหม่"],["in_progress","กำลังทำ"],["waiting","รอข้อมูล"],["review","รอตรวจ"],["closed","ปิด"]].map(([v,l])=>(
-          <button key={v} className={"btn sm "+(f===v?"":"sec")} onClick={()=>setF(v)}>{l}</button>))}
+          <button key={v} className={"btn sm "+(f===v&&!view?"":"sec")} onClick={()=>{setView(null);setF(v);}}>{l}</button>))}
         <button className="btn sm sec" style={{marginLeft:"auto"}} onClick={exportCSV}>⬇ Export CSV ({shown.length})</button>
       </div>
       <table><thead><tr><th>Ticket</th><th>เรื่อง</th><th>ประเภท</th><th>ผู้รับผิดชอบ</th><th>สถานะ</th><th>ครบ SLA</th></tr></thead>
