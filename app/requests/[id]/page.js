@@ -91,7 +91,8 @@ export default function RequestDetail(){
   const bySlot = {};
   atts.forEach(a=>{ if(a.slot_key){ (bySlot[a.slot_key]=bySlot[a.slot_key]||[]).push(a); } });
   const noSlot = atts.filter(a=>!a.slot_key);
-  const slotLabel = Object.fromEntries(slots.map(s=>[s.key,s.label]));
+  const slotLabel = { budget_memo:"MEMO โยกงบ (งบไม่พอ)", excom_approval:"มติอนุมัติ Excom (ซื้อนอกงบ)", result:"ผลงาน (ส่งตรวจ)",
+    ...Object.fromEntries(slots.map(s=>[s.key,s.label])) };
   const leadIds=team.filter(x=>["owner","lead","supervisor"].includes(x.hub_role)).map(x=>x.profiles?.id).filter(Boolean);
   const link="/requests/"+id;
   const tk=r.ticket_no||""; const ttl=r.title||"";
