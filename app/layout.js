@@ -8,7 +8,12 @@ export const metadata = {
   icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
   appleWebApp: { capable: true, title: "AMR Hub", statusBarStyle: "default" },
 };
-export const viewport = { themeColor: "#202028" };
+export const viewport = {
+  themeColor: "#202028",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",   // รองรับ notch/safe-area บน iPhone
+};
 
 export default function RootLayout({ children }) {
   return (<html lang="th"><body>{children}<RegisterSW/><NoWheelNumber/></body></html>);
