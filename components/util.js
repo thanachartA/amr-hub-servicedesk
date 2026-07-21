@@ -84,6 +84,22 @@ export async function deleteAttachment(att){
   return error ? error.message : null;
 }
 
+// ลบคำขอถาวร — ต้องลบไฟล์ใน storage "ก่อน" ลบแถวคำขอเสมอ
+// เหตุผล: RLS ของ storage มองเห็นไฟล์ได้ก็ต่อเมื่อคำขอยังอยู่ ถ้าลบคำขอก่อน ไฟล์จะค้างถาวรลบไม่ได้
+export async function deleteRequestDeep(requestId){
+  if(!requestId) return "ไม่พบคำขอ";
+  // 1) ไฟล์ใน storage ก่อน (ตอนนี้คำขอยังอยู่ → policy ยังมองเห็นไฟล์)
+  const { data:atts }=await supabase.from("hub_attachments").select("id,file_path").eq("request_id",requestId);
+  const paths=(atts||[]).map(a=>a.file_path).filter(Boolean);
+  if(paths.length){
+    const { error:sErr }=await supabase.storage.from(ATT_BUCKET).remove(paths);
+    if(sErr) return "ลบไฟล์แนบไม่สำเร็จ: "+sErr.message+" (ยังไม่ได้ลบคำขอ)";
+  }
+  // 2) ลบคำขอ — แถวลูกทั้งหมด (ไฟล์แนบ/ค่าใช้จ่าย/โยกงบ/มอบหมาย/แจ้งเตือน/ประวัติ) ถูกลบตาม FK cascade
+  const { error }=await supabase.from("hub_requests").delete().eq("id",requestId);
+  return error ? error.message : null;
+}
+
 // เปิดไฟล์ด้วย signed URL (ไฟล์เป็น private)
 export async function openAttachment(path){
   const { data, error }=await supabase.storage.from(ATT_BUCKET).createSignedUrl(path,120);
