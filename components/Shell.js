@@ -9,6 +9,7 @@ export default function Shell({ children, title }) {
   const [me, setMe] = useState(null); const [uid,setUid]=useState(null);
   const [role,setRole]=useState(null); const [isStaff,setIsStaff]=useState(false); const [ready, setReady] = useState(false);
   const [notifs,setNotifs]=useState([]); const [open,setOpen]=useState(false);
+  const [menu,setMenu]=useState(false);   // 📱 ลิ้นชักเมนูบนมือถือ
 
   async function loadNotifs(u){
     const { data }=await supabase.from("hub_notifications").select("*").eq("user_id",u).order("created_at",{ascending:false}).limit(20);
@@ -31,6 +32,8 @@ export default function Shell({ children, title }) {
     });
     return ()=>{ if(timer) clearInterval(timer); };
   }, []);
+  // เปลี่ยนหน้าเมื่อไร ปิดลิ้นชักเมนูเสมอ
+  useEffect(()=>{ setMenu(false); setOpen(false); },[path]);
   const unread=notifs.filter(n=>!n.is_read).length;
   async function openNotif(n){
     if(!n.is_read){ await supabase.from("hub_notifications").update({is_read:true}).eq("id",n.id); setNotifs(ns=>ns.map(x=>x.id===n.id?{...x,is_read:true}:x)); }
@@ -63,9 +66,11 @@ export default function Shell({ children, title }) {
   if (!ready) return <div style={{padding:40,color:"#5A6672"}}>กำลังโหลด…</div>;
   return (
     <div className="layout">
-      <div className="side">
+      {/* ฉากหลังทึบตอนเปิดเมนูบนมือถือ — แตะเพื่อปิด */}
+      <div className={"side-backdrop"+(menu?" show":"")} onClick={()=>setMenu(false)}/>
+      <div className={"side"+(menu?" open":"")}>
         <div className="brand"><img src="/amr-logo.png" alt="AMR ASIA"/><small>Central Admin Hub · Service Desk</small></div>
-        <div className="nav">{nav.map(([h,l])=>(<a key={h} href={h} className={path===h?"active":""}>{l}</a>))}</div>
+        <div className="nav">{nav.map(([h,l])=>(<a key={h} href={h} className={path===h?"active":""} onClick={()=>setMenu(false)}>{l}</a>))}</div>
         <div style={{padding:"14px 20px",marginTop:10,borderTop:"1px solid rgba(255,255,255,.12)",fontSize:12,color:"#a7abb3"}}>
           {me?.full_name}{roleLabel}<br/>
           <a href="#" onClick={async(e)=>{e.preventDefault();await supabase.auth.signOut();router.replace("/login");}} style={{color:"#e6e7ea"}}>ออกจากระบบ</a>
@@ -73,12 +78,13 @@ export default function Shell({ children, title }) {
       </div>
       <div className="main">
         <div className="top" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <button className="menu-btn" onClick={()=>setMenu(m=>!m)} aria-label="เมนู">☰</button>
           <h1>{title}</h1>
           <div style={{position:"relative"}}>
             <button onClick={()=>setOpen(o=>!o)} style={{position:"relative",background:"#fff",border:"1px solid #DDE3E8",borderRadius:8,padding:"7px 11px",cursor:"pointer",fontSize:16}} aria-label="แจ้งเตือน">🔔
               {unread>0&&<span style={{position:"absolute",top:-6,right:-6,background:"#EA0029",color:"#fff",borderRadius:10,fontSize:11,minWidth:18,height:18,lineHeight:"18px",padding:"0 4px",fontWeight:700}}>{unread}</span>}
             </button>
-            {open&&<div style={{position:"absolute",right:0,top:44,width:340,background:"#fff",border:"1px solid #DDE3E8",borderRadius:10,boxShadow:"0 8px 28px rgba(0,0,0,.12)",zIndex:50,overflow:"hidden"}}>
+            {open&&<div style={{position:"absolute",right:0,top:44,width:"min(340px, calc(100vw - 28px))",background:"#fff",border:"1px solid #DDE3E8",borderRadius:10,boxShadow:"0 8px 28px rgba(0,0,0,.12)",zIndex:50,overflow:"hidden"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderBottom:"1px solid #EEF1F3"}}>
                 <b style={{fontSize:13}}>การแจ้งเตือน</b>
                 {unread>0&&<a href="#" onClick={e=>{e.preventDefault();markAll();}} style={{fontSize:12,color:"#EA0029"}}>อ่านทั้งหมด</a>}
