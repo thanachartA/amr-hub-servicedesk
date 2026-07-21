@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
-import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, deleteAttachment, signedUrls, isImage, fmtSize, fileIcon } from "../../../components/util";
+import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, deleteAttachment, deleteRequestDeep, signedUrls, isImage, fmtSize, fileIcon } from "../../../components/util";
 import DynForm, { DynView } from "../../../components/DynForm";
 
 const APV_TH={
@@ -50,6 +50,15 @@ export default function RequestDetail(){
     setMsg(data==="pending_owner" ? "อนุมัติชั้น Supervisor แล้ว — ส่งต่อ Owner อนุมัติชั้นสุดท้าย"
         : data==="approved" ? "อนุมัติเรียบร้อย" : "บันทึกไม่อนุมัติแล้ว");
     load();
+  }
+  async function doDeleteRequest(){
+    if(!confirm("⚠ ลบคำขอนี้ถาวร?\n\n"+(r?.ticket_no||"")+" · "+(r?.title||"")+
+      "\n\nจะลบไฟล์แนบทั้งหมด ค่าใช้จ่าย การโยกงบ และประวัติ — กู้คืนไม่ได้")) return;
+    if(!confirm("ยืนยันอีกครั้ง: ลบถาวรจริง ๆ ใช่ไหม?")) return;
+    setMsg("กำลังลบ…");
+    const err=await deleteRequestDeep(id);
+    if(err){ setMsg(null); alert("ลบไม่สำเร็จ: "+err); return; }
+    window.location.href="/requests";
   }
   async function markPosted(x){
     setExpErr(null);
@@ -440,6 +449,14 @@ export default function RequestDetail(){
 
             {r.status==="closed"&&<div className="muted" style={{fontSize:13}}>✓ ปิดงานแล้ว</div>}
             {!canAssign&&!isAssignee&&active&&<div className="muted" style={{fontSize:13}}>ยังไม่ได้รับมอบหมายงานนี้</div>}
+
+            {canManage&&<div style={{marginTop:14,paddingTop:12,borderTop:"1px dashed #E4E7EB"}}>
+              <button className="btn sm sec" style={{width:"100%",color:"#B03A2E",borderColor:"#F0B7BC"}}
+                onClick={doDeleteRequest}>🗑 ลบคำขอถาวร</button>
+              <div className="muted" style={{fontSize:11,marginTop:4,lineHeight:1.6}}>
+                ลบไฟล์แนบใน storage ก่อน แล้วจึงลบคำขอ · กู้คืนไม่ได้
+              </div>
+            </div>}
           </>}
         </div>
       </div>
