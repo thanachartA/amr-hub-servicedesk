@@ -199,12 +199,16 @@ export default function Budget(){
        {dpt_code:"003",department:"Administration",period:"2026-07",cost_code:"6102061",ac_des:"ค่าโฆษณา",amount:50000,note:""}]);
   }
   function tplActual(){
-    downloadCSV("dept_actual_template.csv",
-      [{key:"department",label:"department"},{key:"doc_no",label:"doc_no"},{key:"line_no",label:"line_no"},
-       {key:"doc_date",label:"doc_date"},{key:"cost_code",label:"cost_code"},{key:"description",label:"description"},
-       {key:"vendor",label:"vendor"},{key:"amount",label:"amount"}],
-      [{department:"GA",doc_no:"JV6900456",line_no:1,doc_date:"2026-07-05",cost_code:"5101",
-        description:"ค่าแท็กซี่",vendor:"-",amount:850}]);
+    // ตรงกับไฟล์ GL export จากบัญชี (ระบบอ่านคอลัมน์เหล่านี้ได้ตรง ๆ ไม่ต้องจัดใหม่)
+    downloadCSV("dept_actual_GL_template.csv",
+      [{key:"ac_code",label:"ac_code"},{key:"ac_des",label:"ac_des"},
+       {key:"dpt_code",label:"dpt_code"},{key:"dpt_name",label:"dpt_name"},
+       {key:"glperiod",label:"glperiod"},{key:"vchdate",label:"vchdate"},{key:"vchno",label:"vchno"},
+       {key:"vend_cust",label:"vend_cust"},{key:"remark",label:"remark"},
+       {key:"amtdr",label:"amtdr"},{key:"amtcr",label:"amtcr"},{key:"Amount",label:"Amount"}],
+      [{ac_code:"6101011",ac_des:"เงินเดือนพนักงาน",dpt_code:"004",dpt_name:"HR",
+        glperiod:7,vchdate:"2026-07-31",vchno:"JV260700066",vend_cust:"",remark:"Record Salary Jul'2026",
+        amtdr:120000,amtcr:0,Amount:120000}]);
   }
   const day=new Date().toISOString().slice(0,10);
   function exportView(){
