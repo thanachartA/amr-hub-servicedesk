@@ -9,7 +9,15 @@ import DocSlots from "../../../components/DocSlots";
 import Combobox from "../../../components/Combobox";
 
 const THRESHOLD=100000;
-const CAT={ finance:{label:"💰 การเงิน & เบิกจ่าย",order:1}, procurement:{label:"🛒 จัดซื้อ & Vendor",order:2}, ga:{label:"🏢 ธุรการ & ยานพาหนะ",order:3} };
+const CAT={
+  finance:{label:"💰 การเงิน & เบิกจ่าย",order:1},
+  procurement:{label:"🛒 จัดซื้อ & Vendor",order:2},
+  ga:{label:"🏢 ธุรการ & ยานพาหนะ",order:3},
+  hr:{label:"👥 บุคคล & กะพนักงาน",order:4},
+  inventory:{label:"📦 สินค้า & ทรัพย์สิน",order:5},
+  project:{label:"📊 งานโครงการ",order:6},
+  quality:{label:"📋 เอกสาร & คุณภาพ",order:7},
+};
 const CAT_OTHER={label:"อื่น ๆ",order:9};
 function groupTypes(types){
   const g={};
