@@ -13,6 +13,7 @@ export default function Admin(){
   const [rows,setRows]=useState([]); const [team,setTeam]=useState({}); const [q,setQ]=useState(""); const [msg,setMsg]=useState(null);
   const [types,setTypes]=useState([]); const [staff,setStaff]=useState([]);
   const [projects,setProjects]=useState([]); const [pq,setPq]=useState(""); const [onlyUnset,setOnlyUnset]=useState(false);
+  const [depts,setDepts]=useState([]);   // เจ้าประจำแผนก
   const [impBusy,setImpBusy]=useState(false); const [impResult,setImpResult]=useState(null);
   // Form Builder
   const [editId,setEditId]=useState(null); const [draft,setDraft]=useState(null); const [prev,setPrev]=useState({}); const [saving,setSaving]=useState(false);
@@ -124,6 +125,8 @@ export default function Admin(){
     setTypes(rt||[]);
     const { data:pj }=await supabase.from("projects").select("id,code,name,hub_owner_id,hub_backup_owner_id").order("code").limit(500);
     setProjects(pj||[]);
+    const { data:dp }=await supabase.from("hub_departments").select("code,name,hub_owner_id,hub_backup_owner_id").eq("is_active",true).order("code");
+    setDepts(dp||[]);
   }
   // ⬇ ดาวน์โหลดเทมเพลต: รหัส+ชื่อโครงการครบทุกแถว + เจ้าประจำปัจจุบัน (ถ้ามี)
   function exportTemplate(){
@@ -232,6 +235,13 @@ export default function Admin(){
     if(error){ setMsg("ผิดพลาด: "+error.message); return; }
     setProjects(ps=>ps.map(p=>p.id===projId?{...p,[field]:value||null}:p));
     setMsg("บันทึกเจ้าประจำโครงการแล้ว");
+  }
+  async function setDeptOwner(code, field, value){
+    setMsg(null);
+    const { error }=await supabase.from("hub_departments").update({[field]: value||null}).eq("code",code);
+    if(error){ setMsg("ผิดพลาด: "+error.message); return; }
+    setDepts(ds=>ds.map(d=>d.code===code?{...d,[field]:value||null}:d));
+    setMsg("บันทึกเจ้าประจำแผนกแล้ว");
   }
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession();
@@ -426,6 +436,32 @@ export default function Admin(){
           </select></td>
         </tr>))}
           {!shownProjects.length&&<tr><td colSpan="4" className="muted">ไม่พบโครงการ</td></tr>}</tbody></table>
+      </div>
+    </div>
+
+    <div className="card">
+      <h2>🏢 เจ้าประจำแผนก</h2>
+      <p className="muted" style={{marginBottom:10,fontSize:12.5}}>
+        ถ้าคำขอ<b>ไม่ระบุโครงการ</b> → ระบบแนะนำ <b>เจ้าประจำแผนก</b> ของแผนกที่เลือก (หรือแผนกของผู้ขอ)<br/>
+        ลำดับ routing: <b>โครงการ → แผนก → ประเภทงาน → โหลดน้อยสุด</b> · ตั้งไว้แล้ว {depts.filter(d=>d.hub_owner_id).length}/{depts.length} แผนก
+      </p>
+      <div style={{overflowX:"auto"}}>
+        <table><thead><tr><th>รหัส</th><th>แผนก</th><th>เจ้าประจำ</th><th>ตัวสำรอง</th></tr></thead>
+        <tbody>{depts.map(d=>(<tr key={d.code}>
+          <td className="mono"><b>{d.code}</b></td>
+          <td style={{maxWidth:280,fontSize:12.5}}>{d.name}</td>
+          <td><select value={d.hub_owner_id||""} onChange={e=>setDeptOwner(d.code,"hub_owner_id",e.target.value)}
+            style={{minWidth:170,borderColor:!d.hub_owner_id?"#E8A33D":undefined}}>
+            <option value="">— ยังไม่ตั้ง —</option>
+            {staff.map(s=>(<option key={s.id} value={s.id}>{s.name}{!s.avail?" (ลา)":""}</option>))}
+          </select></td>
+          <td><select value={d.hub_backup_owner_id||""} onChange={e=>setDeptOwner(d.code,"hub_backup_owner_id",e.target.value)}
+            style={{minWidth:170}}>
+            <option value="">— ยังไม่ตั้ง —</option>
+            {staff.map(s=>(<option key={s.id} value={s.id}>{s.name}{!s.avail?" (ลา)":""}</option>))}
+          </select></td>
+        </tr>))}
+        {!depts.length&&<tr><td colSpan="4" className="muted">ยังไม่มีแผนกในระบบ</td></tr>}</tbody></table>
       </div>
     </div>
 
