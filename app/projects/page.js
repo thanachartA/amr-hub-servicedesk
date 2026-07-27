@@ -62,7 +62,7 @@ export default function Projects(){
     const { data:t }=await supabase.from("hub_team").select("hub_role").eq("user_id",sess.session.user.id).maybeSingle();
     setCanManage(["owner","supervisor"].includes(t?.hub_role));
     // อ่านสรุปรายโครงการจาก materialized view (1,639 แถว = 2 request แทน 19k แถว = 20 request)
-    const sum=await fetchAll("hub_project_budget_summary","*",b=>b.order("actual_all",{ascending:false}));
+    const sum=await fetchAll("hub_project_summary_v","*",b=>b.order("actual_all",{ascending:false}));
     const { data:e }=await supabase.from("hub_expense_entries")
       .select("amount,approval_status,created_at,project_id,projects(code,name),hub_cost_codes(code,name),hub_requests(ticket_no,title)");
     setRows0(sum); setDetail(e||[]); setLineCache({}); setLoading(false);
