@@ -253,7 +253,8 @@ export default function Budget(){
         const row=grid[r]; const g=k=>ix[k]>=0?String(row[ix[k]]??"").trim():"";
         const rowNo=r+headerRow+1;
         const dcode=g("dept_code");
-        const cname=g("cost_name");
+        // ชื่อ cost code: ใช้ ac_des/cost_name → ถ้าไม่มี ใช้ note (บางไฟล์งบใส่คำอธิบายไว้ที่ note)
+        const cname=g("cost_name")||g("note");
         const d=g("department") || dcode;   // ถ้าไฟล์มีแต่รหัสฝ่าย ก็ใช้รหัสไปก่อน
         // จำนวนเงิน: ใช้ amount/Dr-Cr ถ้ามี ไม่งั้นคำนวณ amtdr - amtcr
         let amt=toNum(g("amount"));
