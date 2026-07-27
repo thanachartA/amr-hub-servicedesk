@@ -29,7 +29,8 @@ function groupTypes(types){
 export default function NewRequest(){
   const router=useRouter();
   const [types,setTypes]=useState([]); const [projects,setProjects]=useState([]); const [codes,setCodes]=useState([]);
-  const [form,setForm]=useState({type:"",title:"",detail:"",priority:"normal",due:"",project:"",cost:"",amount:""});
+  const [depts,setDepts]=useState([]);          // แผนก (master) สำหรับจ่ายงานตามแผนก
+  const [form,setForm]=useState({type:"",title:"",detail:"",priority:"normal",due:"",project:"",cost:"",amount:"",department:""});
   const [err,setErr]=useState(null); const [busy,setBusy]=useState(false);
   const [files,setFiles]=useState([]);          // เอกสารอื่น ๆ (ไม่เข้าช่อง)
   const [docs,setDocs]=useState({});            // { slot_key: [File,...] }
@@ -47,11 +48,18 @@ export default function NewRequest(){
   const [excomFile,setExcomFile]=useState(null);// มติ Excom (Capex)
   const [excomAck,setExcomAck]=useState(false);
   useEffect(()=>{ (async()=>{
-    const [t,p,c]=await Promise.all([
+    const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
+    const [t,p,c,d,me]=await Promise.all([
       supabase.from("hub_request_types").select("*").eq("is_active",true).order("sort_order"),
       supabase.from("projects").select("id,code,name,budget_amount").order("code").limit(2000),
-      supabase.from("hub_cost_codes").select("*").eq("is_active",true).order("code")]);
-    setTypes(t.data||[]); setProjects(p.data||[]); setCodes(c.data||[]);
+      supabase.from("hub_cost_codes").select("*").eq("is_active",true).order("code"),
+      supabase.from("hub_departments").select("code,name").eq("is_active",true).order("code"),
+      supabase.from("profiles").select("department").eq("id",uid).maybeSingle()]);
+    setTypes(t.data||[]); setProjects(p.data||[]); setCodes(c.data||[]); setDepts(d.data||[]);
+    // default แผนก = แผนกของผู้ขอ (จับคู่ชื่อ/รหัสกับ master) — เปลี่ยนได้
+    const pd=me.data?.department;
+    if(pd){ const hit=(d.data||[]).find(x=>String(x.name).toLowerCase()===pd.toLowerCase()||String(x.code).toLowerCase()===pd.toLowerCase());
+      if(hit) setForm(f=>({...f,department:hit.code})); }
   })(); },[]);
   // โหลดงบคงเหลือเมื่อเลือกโครงการ
   useEffect(()=>{ (async()=>{
@@ -117,7 +125,7 @@ export default function NewRequest(){
     const { data:req, error }=await supabase.from("hub_requests").insert({
       requester_id:uid, request_type_id:form.type, title:form.title, detail:form.detail,
       priority:form.priority, requested_due:form.due||null, sla_due_at:sla, status:"new",
-      project_id: form.project||null, form_data: fd
+      project_id: form.project||null, department_code: form.department||null, form_data: fd
     }).select().single();
     if(error){ setErr(error.message); setBusy(false); return; }
     if(needExpense && form.amount){
@@ -191,6 +199,14 @@ export default function NewRequest(){
             placeholder="🔎 พิมพ์รหัส/ชื่อโครงการเพื่อค้นหา"
             emptyLabel="— ไม่ระบุโครงการ —"/>
           <div className="muted" style={{fontSize:11,marginTop:4}}>พิมพ์รหัสหรือชื่อโครงการเพื่อค้นหา · ระบุโครงการ = ระบบส่งงานให้ <b>เจ้าประจำโครงการ</b> โดยตรง</div>
+        </div>
+        <div className="field">
+          <label>แผนก (สำหรับจ่ายงาน)</label>
+          <select value={form.department} onChange={e=>up("department",e.target.value)}>
+            <option value="">— ตามแผนกของฉัน (อัตโนมัติ) —</option>
+            {depts.map(d=>(<option key={d.code} value={d.code}>{d.code} · {d.name}</option>))}
+          </select>
+          <div className="muted" style={{fontSize:11,marginTop:4}}>ถ้าไม่ระบุโครงการ ระบบจะส่งงานให้ <b>เจ้าประจำแผนก</b> · เว้นว่าง = ใช้แผนกของผู้ขอ</div>
         </div>
 
         {needExpense&&(<div style={{background:"#E4F3EA",border:"1px solid #B7DEC8",borderRadius:10,padding:14,marginBottom:14}}>
