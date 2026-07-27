@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo } from "react";
 import Shell from "../../components/Shell";
 import { supabase } from "../../lib/supabaseClient";
 import { TrendBars } from "../../components/charts";
-import { fmtMoney } from "../../components/util";
+import { fmtMoney, fetchAll } from "../../components/util";
 
 const M_TH=["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
 const shortM=p=>{ const m=/^\d{4}-(\d{2})$/.exec(p); return m?M_TH[Number(m[1])-1]:p; };
@@ -19,13 +19,13 @@ export default function BudgetExec(){
     const lead=(t||[]).some(x=>x.profiles?.id===uid&&["owner","lead","supervisor"].includes(x.hub_role));
     setOk(lead); if(!lead) return;
     const [p,b,a,e,x]=await Promise.all([
-      supabase.from("hub_project_budget").select("ref_code,project_name,pm_name,budget,actual_all").limit(20000),
-      supabase.from("hub_dept_budgets").select("department,dept_code,period,amount").limit(20000),
-      supabase.from("hub_dept_actuals").select("department,period,amount").limit(20000),
-      supabase.from("hub_expense_entries").select("amount,approval_status,expense_type,out_of_budget"),
-      supabase.from("hub_budget_transfers").select("amount,scope,status"),
+      fetchAll("hub_project_budget","ref_code,project_name,pm_name,budget,actual_all",q=>q.order("id",{ascending:true})),
+      fetchAll("hub_dept_budgets","department,dept_code,period,amount",q=>q.order("id",{ascending:true})),
+      fetchAll("hub_dept_actuals","department,period,amount",q=>q.order("id",{ascending:true})),
+      supabase.from("hub_expense_entries").select("amount,approval_status,expense_type,out_of_budget").then(r=>r.data||[]),
+      supabase.from("hub_budget_transfers").select("amount,scope,status").then(r=>r.data||[]),
     ]);
-    setPb(p.data||[]); setDb(b.data||[]); setDa(a.data||[]); setExp(e.data||[]); setTf(x.data||[]);
+    setPb(p||[]); setDb(b||[]); setDa(a||[]); setExp(e||[]); setTf(x||[]);
   })(); },[]);
 
   const proj=useMemo(()=>{
