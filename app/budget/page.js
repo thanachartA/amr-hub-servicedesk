@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
 import Shell from "../../components/Shell";
 import { supabase } from "../../lib/supabaseClient";
-import { fmtMoney, downloadCSV, readSheetAt, toNum, toDate } from "../../components/util";
+import { fmtMoney, downloadCSV, readSheetAt, toNum, toDate, fetchAll } from "../../components/util";
 
 // รองรับทั้งเทมเพลตของเรา และไฟล์ Raw GL จากบัญชีโดยตรง (dpt_name / ac_code / vchno / vchdate / Dr-Cr)
 const ALIAS={
@@ -98,10 +98,10 @@ export default function Budget(){
     const { data:t }=await supabase.from("hub_team").select("hub_role").eq("user_id",sess.session.user.id).maybeSingle();
     setCanManage(["owner","supervisor"].includes(t?.hub_role));
     const [b,a]=await Promise.all([
-      supabase.from("hub_dept_budgets").select("*").limit(20000),
-      supabase.from("hub_dept_actuals").select("*").limit(20000),
+      fetchAll("hub_dept_budgets","*",q=>q.order("id",{ascending:true})),
+      fetchAll("hub_dept_actuals","*",q=>q.order("id",{ascending:true})),
     ]);
-    setBudgets(b.data||[]); setActuals(a.data||[]);
+    setBudgets(b||[]); setActuals(a||[]);
   }
   useEffect(()=>{ load(); },[]);
 
