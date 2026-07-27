@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
-import { notifyMany, uploadAttachments, fmtSize, fileIcon, missingDocs, fmtMoney } from "../../../components/util";
+import { notifyMany, uploadAttachments, fmtSize, fileIcon, missingDocs, fmtMoney, addLink } from "../../../components/util";
 import DynForm, { missingFields } from "../../../components/DynForm";
 import DocSlots from "../../../components/DocSlots";
 import Combobox from "../../../components/Combobox";
@@ -34,6 +34,8 @@ export default function NewRequest(){
   const [files,setFiles]=useState([]);          // เอกสารอื่น ๆ (ไม่เข้าช่อง)
   const [docs,setDocs]=useState({});            // { slot_key: [File,...] }
   const [fd,setFd]=useState({});
+  const [links,setLinks]=useState([]);          // ลิงก์เอกสารภายนอก (ไฟล์ใหญ่)
+  const [lU,setLU]=useState(""); const [lL,setLL]=useState("");
   const [bud,setBud]=useState(null);            // งบเหลือของโครงการที่เลือก
   // Opex/Capex + การจัดการงบไม่พอ (governance)
   const [etype,setEtype]=useState("");          // opex | capex
@@ -81,7 +83,8 @@ export default function NewRequest(){
   function up(k,v){ setForm(s=>({...s,[k]:v}));
     if(k==="type"){ setDocs({}); setFiles([]); setFd({});
       setEtype(""); setTScope("in_dept"); setTFrom(""); setTAmt(""); setCfo(false); setCeo(false);
-      setMemoFile(null); setExcomFile(null); setExcomAck(false); }
+      setMemoFile(null); setExcomFile(null); setExcomAck(false);
+      setLinks([]); setLU(""); setLL(""); }
   }
   async function submit(e){ e.preventDefault(); setErr(null);
     // ⛔ บังคับกรอกให้ครบก่อนส่ง
@@ -144,6 +147,8 @@ export default function NewRequest(){
       const errs=await uploadAttachments(req.id, uid, items);
       if(errs.length) setErr("บางไฟล์แนบไม่สำเร็จ: "+errs.join(" · "));
     }
+    // ลิงก์เอกสารภายนอก (ไฟล์ใหญ่)
+    for(const l of links){ await addLink(req.id, uid, l.url, l.label); }
     await supabase.from("hub_activity_log").insert({request_id:req.id,actor_id:uid,action:"created",to_status:"new"});
     const { data:leads }=await supabase.from("hub_team").select("user_id").in("hub_role",["owner","lead","supervisor"]);
     notifyMany((leads||[]).map(l=>l.user_id),"มีคำขอใหม่เข้ามา",(req.ticket_no||"")+" · "+form.title,"/requests/"+req.id,req.id);
@@ -277,6 +282,24 @@ export default function NewRequest(){
         </div>)}
         {sel&&<DocSlots slots={sel.doc_slots} picked={docs} onChange={setDocs}
           extra={files} onExtra={setFiles} formData={fd}/>}
+
+        {sel&&<div className="field" style={{background:"#F3F8FF",border:"1px solid #C7D9F7",borderRadius:10,padding:"12px 14px"}}>
+          <label style={{color:"#2453A8"}}>🔗 ลิงก์เอกสารภายนอก (สำหรับไฟล์ใหญ่เกิน 10MB — OneDrive / SharePoint / Drive)</label>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <input value={lU} onChange={e=>setLU(e.target.value)} placeholder="วางลิงก์ share (https://...)" style={{flex:"2 1 240px"}}/>
+            <input value={lL} onChange={e=>setLL(e.target.value)} placeholder="ชื่อ/คำอธิบาย (ถ้ามี)" style={{flex:"1 1 140px"}}/>
+            <button type="button" className="btn sm sec" disabled={!lU.trim()}
+              onClick={()=>{ setLinks(v=>[...v,{url:lU.trim(),label:lL.trim()}]); setLU(""); setLL(""); }}>+ เพิ่ม</button>
+          </div>
+          {links.length>0&&<div style={{marginTop:8,display:"grid",gap:4}}>
+            {links.map((l,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5}}>
+              <span>🔗</span><span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.label||l.url}</span>
+              <button type="button" onClick={()=>setLinks(v=>v.filter((_,j)=>j!==i))}
+                style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:14}}>✕</button>
+            </div>))}
+          </div>}
+          <div className="muted" style={{fontSize:11,marginTop:5}}>💡 ตั้งลิงก์ให้ "ผู้ที่มีลิงก์เปิดดูได้" ก่อนวาง เพื่อให้แอดมินเปิดได้</div>
+        </div>}
         <div className="muted" style={{fontSize:11,marginTop:-6,marginBottom:12}}>
           รูป / PDF / Word / Excel · สูงสุด 10MB ต่อไฟล์
         </div>
