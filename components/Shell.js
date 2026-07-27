@@ -46,21 +46,21 @@ export default function Shell({ children, title }) {
   }
   const canManage = role==="owner"||role==="supervisor";
   const canViewAll = canManage || role==="lead";
+  // เมนูจัดเป็นกลุ่ม (section) — แยกงาน Service Desk ออกจากงบประมาณให้ชัด
   let nav;
   if(!isStaff){
-    nav = [["/requests/new","+ เปิดคำขอใหม่"],["/requests","คำขอของฉัน"]];
+    nav = [{items:[["/requests/new","+ เปิดคำขอใหม่"],["/requests","คำขอของฉัน"]]}];
   } else if(role==="agent"){
-    nav = [["/","Dashboard"],["/requests","งานของฉัน"],["/requests/new","+ เปิดคำขอ"]];
+    nav = [{items:[["/","Dashboard"],["/requests","งานของฉัน"],["/requests/new","+ เปิดคำขอ"]]}];
   } else {
-    nav = [["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"]];
-    if(canViewAll) nav.push(["/team","ทีม (มอบหมาย)"]);
-    if(canViewAll) nav.push(["/forms","ช่องกรอก (Form Builder)"]);
-    nav.push(["/projects","ต้นทุนโครงการ"]);
-    nav.push(["/budget","งบประมาณฝ่าย"]);
-    nav.push(["/reports","รายงานปิดเดือน"]);
-    nav.push(["/performance","Performance"]);
-    nav.push(["/executive","รายงานผู้บริหาร"]);
-    if(canManage) nav.push(["/admin","จัดการผู้ใช้ (Admin)"]);
+    const work=[["/","Dashboard"],["/requests","คำขอทั้งหมด"],["/requests/new","+ เปิดคำขอ"]];
+    if(canViewAll){ work.push(["/team","ทีม (มอบหมาย)"]); work.push(["/forms","ช่องกรอก (Form Builder)"]); }
+    work.push(["/performance","Performance"]);
+    work.push(["/executive","รายงานผู้บริหาร"]);
+    const fin=[["/budget-exec","Dashboard งบประมาณ"],["/projects","ต้นทุนโครงการ"],
+      ["/budget","งบประมาณฝ่าย"],["/reports","รายงานปิดเดือน"]];
+    nav=[{sec:"งาน Service Desk",items:work},{sec:"งบประมาณ & การเงิน",items:fin}];
+    if(canManage) nav.push({sec:"ตั้งค่า",items:[["/admin","จัดการผู้ใช้"]]});
   }
   const roleLabel = role==="owner"?" · Owner":role==="lead"?" · Lead":role==="supervisor"?" · Supervisor":isStaff?" · Hub":"";
   if (!ready) return <div style={{padding:40,color:"#5A6672"}}>กำลังโหลด…</div>;
@@ -70,7 +70,10 @@ export default function Shell({ children, title }) {
       <div className={"side-backdrop"+(menu?" show":"")} onClick={()=>setMenu(false)}/>
       <div className={"side"+(menu?" open":"")}>
         <div className="brand"><img src="/amr-logo.png" alt="AMR ASIA"/><small>Central Admin Hub · Service Desk</small></div>
-        <div className="nav">{nav.map(([h,l])=>(<a key={h} href={h} className={path===h?"active":""} onClick={()=>setMenu(false)}>{l}</a>))}</div>
+        <div className="nav">{nav.map((g,gi)=>(<div key={gi} style={{marginBottom:g.sec?6:0}}>
+          {g.sec&&<div className="nav-sec">{g.sec}</div>}
+          {g.items.map(([h,l])=>(<a key={h} href={h} className={path===h?"active":""} onClick={()=>setMenu(false)}>{l}</a>))}
+        </div>))}</div>
         <div style={{padding:"14px 20px",marginTop:10,borderTop:"1px solid rgba(255,255,255,.12)",fontSize:12,color:"#a7abb3"}}>
           {me?.full_name}{roleLabel}<br/>
           <a href="#" onClick={async(e)=>{e.preventDefault();await supabase.auth.signOut();router.replace("/login");}} style={{color:"#e6e7ea"}}>ออกจากระบบ</a>
