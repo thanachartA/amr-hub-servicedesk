@@ -272,6 +272,8 @@ export default function Budget(){
 
         if(kind==="budget"){
           const code=g("cost_code")||null;
+          // ข้ามแถว "ยอดรวมรายหมวด" (รหัสสั้น 1-2 หลัก) — เก็บเฉพาะบัญชี GL หลายหลัก ไม่ให้นับซ้ำกับรายละเอียด
+          if(code && /^[0-9]{1,2}$/.test(code)) continue;
           const k2=d.toLowerCase()+"|"+per+"|"+(code||"").toLowerCase();
           if(seen[k2]){ errors.push("แถว "+rowNo+": ซ้ำในไฟล์ ("+d+" "+per+" "+(code||"รวม")+")"); continue; }
           seen[k2]=1;
