@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
-import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, deleteAttachment, deleteRequestDeep, signedUrls, isImage, fmtSize, fileIcon } from "../../../components/util";
+import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, deleteAttachment, deleteRequestDeep, signedUrls, isImage, fmtSize, fileIcon, isLink, openLink, addLink } from "../../../components/util";
 import DynForm, { DynView } from "../../../components/DynForm";
 
 const APV_TH={
@@ -24,6 +24,7 @@ export default function RequestDetail(){
   const [assignee,setAssignee]=useState(""); const [msg,setMsg]=useState(null);
   const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
   const [atts,setAtts]=useState([]); const [upBusy,setUpBusy]=useState(false); const [thumbs,setThumbs]=useState({});
+  const [linkUrl,setLinkUrl]=useState(""); const [linkLabel,setLinkLabel]=useState("");   // ลิงก์เอกสารภายนอก
   // อนุมัติค่าใช้จ่าย 2 ชั้น
   const [role,setRole]=useState(null); const [threshold,setThreshold]=useState(100000);
   const [apvBusy,setApvBusy]=useState(null); const [expErr,setExpErr]=useState(null);
@@ -59,6 +60,13 @@ export default function RequestDetail(){
     const err=await deleteRequestDeep(id);
     if(err){ setMsg(null); alert("ลบไม่สำเร็จ: "+err); return; }
     window.location.href="/requests";
+  }
+  async function addLinkNow(){
+    if(!linkUrl.trim()) return;
+    const { data:sess }=await supabase.auth.getSession();
+    const err=await addLink(id, sess.session.user.id, linkUrl, linkLabel);
+    if(err){ setMsg("เพิ่มลิงก์ไม่สำเร็จ: "+err); return; }
+    setLinkUrl(""); setLinkLabel(""); load();
   }
   async function markPosted(x){
     setExpErr(null);
@@ -291,6 +299,15 @@ export default function RequestDetail(){
                 </label>
               : (uid===r.requester_id && <span className="muted" style={{fontSize:11.5}}>🔒 แนบ/ลบไม่ได้ (ถูกมอบหมายแล้ว)</span>)}
           </div>
+          {canAttach&&<div style={{background:"#F3F8FF",border:"1px solid #C7D9F7",borderRadius:8,padding:"9px 11px",marginBottom:10}}>
+            <div style={{fontSize:12,fontWeight:600,color:"#2453A8",marginBottom:6}}>🔗 แนบลิงก์เอกสารภายนอก (สำหรับไฟล์ใหญ่ — OneDrive / SharePoint / Drive)</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              <input value={linkUrl} onChange={e=>setLinkUrl(e.target.value)} placeholder="วางลิงก์ share ที่นี่ (https://...)" style={{flex:"2 1 240px"}}/>
+              <input value={linkLabel} onChange={e=>setLinkLabel(e.target.value)} placeholder="ชื่อ/คำอธิบาย (ถ้ามี)" style={{flex:"1 1 150px"}}/>
+              <button className="btn sm" disabled={!linkUrl.trim()} onClick={addLinkNow}>+ เพิ่มลิงก์</button>
+            </div>
+            <div className="muted" style={{fontSize:11,marginTop:5}}>💡 ตั้งค่าลิงก์ให้ "ผู้ที่มีลิงก์เปิดดูได้" ก่อนวาง เพื่อให้แอดมินเปิดได้</div>
+          </div>}
           {atts.length===0&&<div className="muted" style={{fontSize:13}}>ยังไม่มีไฟล์แนบ</div>}
           <div style={{display:"grid",gap:6}}>
             {atts.map(a=>{ const canDel = canManage || (a.uploaded_by===uid && (staff || r.status==="new")); const th=thumbs[a.file_path];
@@ -299,16 +316,16 @@ export default function RequestDetail(){
                 {th
                   ? <img src={th} alt={a.file_name} onClick={()=>openAttachment(a.file_path)}
                       style={{width:52,height:52,objectFit:"cover",borderRadius:6,border:"1px solid #DDE3E8",cursor:"pointer",flexShrink:0,background:"#fff"}}/>
-                  : <div style={{width:52,height:52,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,borderRadius:6,border:"1px solid #DDE3E8",background:"#fff",flexShrink:0}}>{fileIcon(a.mime_type)}</div>}
+                  : <div style={{width:52,height:52,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,borderRadius:6,border:"1px solid #DDE3E8",background:"#fff",flexShrink:0}}>{isLink(a)?"🔗":fileIcon(a.mime_type)}</div>}
                 <div style={{fontSize:13,minWidth:0}}>
                   {a.slot_key&&<div><span className="tag" style={{fontSize:10,background:"#EEF4FF",color:"#2D6CDF",borderColor:"#C7D9F7"}}>
                     {slotLabel[a.slot_key]||a.slot_key}</span></div>}
                   <b style={{wordBreak:"break-all"}}>{a.file_name}</b>
-                  <div className="muted" style={{fontSize:11,marginTop:2}}>{fmtSize(a.size_bytes)} · {a.uploader?.full_name||"—"} · {fmtDate(a.created_at)}</div>
+                  <div className="muted" style={{fontSize:11,marginTop:2}}>{isLink(a)?"🔗 ลิงก์ภายนอก":fmtSize(a.size_bytes)} · {a.uploader?.full_name||"—"} · {fmtDate(a.created_at)}</div>
                 </div>
               </div>
               <div style={{display:"flex",gap:6,flexShrink:0}}>
-                <button className="btn sm" onClick={async()=>{ const ok=await openAttachment(a.file_path); if(!ok) setMsg("เปิดไฟล์ไม่สำเร็จ (ไม่มีสิทธิ์ หรือไฟล์หาย)"); }}>เปิด</button>
+                <button className="btn sm" onClick={async()=>{ if(isLink(a)){ openLink(a.file_url); return; } const ok=await openAttachment(a.file_path); if(!ok) setMsg("เปิดไฟล์ไม่สำเร็จ (ไม่มีสิทธิ์ หรือไฟล์หาย)"); }}>{isLink(a)?"เปิดลิงก์":"เปิด"}</button>
                 {canDel&&<button className="btn sm sec" style={{color:"#B03A2E"}} onClick={()=>removeFile(a)}>ลบ</button>}
               </div>
             </div>); })}
