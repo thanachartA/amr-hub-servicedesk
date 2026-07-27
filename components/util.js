@@ -7,6 +7,21 @@ export function StatusBadge({ s }){
 export function fmtDate(d){ if(!d) return "—"; const x=new Date(d); return x.toLocaleDateString("th-TH",{day:"2-digit",month:"short"})+" "+x.toLocaleTimeString("th-TH",{hour:"2-digit",minute:"2-digit"}); }
 export function fmtMoney(n){ return (Number(n)||0).toLocaleString("th-TH",{minimumFractionDigits:0}); }
 
+// ดึงข้อมูลทุกแถวแบบแบ่งหน้า — Supabase/PostgREST จำกัด 1000 แถว/คำขอ
+// build(query) รับ query builder ให้ต่อ .eq/.order เพิ่มได้ (ไม่ต้องใส่ range เอง)
+export async function fetchAll(table, columns="*", build){
+  const PAGE=1000; const all=[];
+  for(let from=0;;from+=PAGE){
+    let q=supabase.from(table).select(columns);
+    if(build) q=build(q);
+    const { data,error }=await q.range(from,from+PAGE-1);
+    if(error||!data?.length) break;
+    all.push(...data);
+    if(data.length<PAGE) break;
+  }
+  return all;
+}
+
 // สร้างการแจ้งเตือนในระบบให้ผู้รับ (เงียบถ้า error)
 export async function notify(userId, title, body, link, requestId){
   if(!userId) return;
