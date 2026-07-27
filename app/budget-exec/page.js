@@ -19,7 +19,7 @@ export default function BudgetExec(){
     const lead=(t||[]).some(x=>x.profiles?.id===uid&&["owner","lead","supervisor"].includes(x.hub_role));
     setOk(lead); if(!lead) return;
     const [p,b,a,e,x]=await Promise.all([
-      fetchAll("hub_project_budget_summary","ref_code,project_name,pm_name,budget,actual_all",q=>q.order("actual_all",{ascending:false})),
+      fetchAll("hub_project_summary_v","ref_code,project_name,pm_name,budget,actual_all",q=>q.order("actual_all",{ascending:false})),
       fetchAll("hub_dept_budgets","department,dept_code,period,amount",q=>q.order("id",{ascending:true})),
       fetchAll("hub_dept_actuals","department,period,amount",q=>q.order("id",{ascending:true})),
       supabase.from("hub_expense_entries").select("amount,approval_status,expense_type,out_of_budget").then(r=>r.data||[]),
