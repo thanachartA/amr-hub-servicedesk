@@ -36,6 +36,8 @@ export default function Projects(){
   const [busy,setBusy]=useState(false); const [result,setResult]=useState(null); const [msg,setMsg]=useState(null);
   const [q,setQ]=useState(""); const [onlyOver,setOnlyOver]=useState(false);
   const [syncProjects,setSyncProjects]=useState(true);
+  const [open,setOpen]=useState(()=>new Set());   // ref ของโครงการที่กางดูราย cost code
+  function toggle(ref){ setOpen(s=>{ const n=new Set(s); n.has(ref)?n.delete(ref):n.add(ref); return n; }); }
 
   async function load(){
     const { data:sess }=await supabase.auth.getSession();
@@ -259,9 +261,14 @@ export default function Projects(){
       </tr></thead>
       <tbody>{shown.slice(0,300).map(r=>{
         const pct=r.budget?Math.round(100*r.actual/r.budget):0;
-        return (<tr key={r.ref}>
-          <td><b className="mono" style={{fontSize:12}}>{r.ref}</b>
-            <div className="muted" style={{fontSize:11.5}}>{r.name}</div></td>
+        const isOpen=open.has(r.ref);
+        const lines=[...(r.lines||[])].sort((a,b)=>(Number(b.actual_all)||0)-(Number(a.actual_all)||0));
+        return (<Fragment key={r.ref}>
+        <tr onClick={()=>toggle(r.ref)} style={{cursor:"pointer",background:isOpen?"#F3F8FF":undefined}}>
+          <td><span style={{color:"#98A4AE",marginRight:6,fontSize:11}}>{isOpen?"▾":"▸"}</span>
+            <b className="mono" style={{fontSize:12}}>{r.ref}</b>
+            <div className="muted" style={{fontSize:11.5,marginLeft:17}}>{r.name}
+              <span style={{color:"#2D6CDF"}}> · {lines.length} cost code</span></div></td>
           <td className="muted" style={{fontSize:11.5}}>{r.pm||"—"}</td>
           <td className="right">{r.budget?fmtMoney(r.budget):"—"}</td>
           <td className="right muted">{r.purchase?fmtMoney(r.purchase):"—"}</td>
@@ -270,7 +277,36 @@ export default function Projects(){
           <td className="right">{r.budget
             ? <b style={{color:pct>100?"#B03A2E":pct>85?"#B26A00":"#2E7D5B"}}>{pct}%</b>
             : <span className="muted">ไม่มีงบ</span>}</td>
-        </tr>);
+        </tr>
+        {isOpen&&<tr><td colSpan="7" style={{background:"#F7FAFF",padding:"6px 10px 12px 24px"}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#052460",margin:"4px 0 6px"}}>
+            💰 งบตาม Cost Code — {r.ref}
+            {r.hub>0&&<span className="muted" style={{fontWeight:400}}> · Hub บันทึกเพิ่ม {fmtMoney(r.hub)}</span>}
+          </div>
+          <table style={{fontSize:12}}><thead><tr>
+            <th>Cost Code</th><th>รายละเอียด</th>
+            <th className="right">Budget</th><th className="right">Purchase</th>
+            <th className="right">Actual (ALL)</th><th className="right">คงเหลือ</th><th className="right">% ใช้</th>
+          </tr></thead><tbody>
+          {lines.map((l,i)=>{
+            const b=Number(l.budget)||0, a=Number(l.actual_all)||0, bal=b-a, p=b?Math.round(100*a/b):0;
+            return (<tr key={i}>
+              <td className="mono" style={{fontSize:11.5}}>{l.cost_code||"—"}</td>
+              <td className="muted" style={{fontSize:11.5,maxWidth:280,whiteSpace:"normal"}}>{l.description||"—"}</td>
+              <td className="right">{b?fmtMoney(b):"—"}</td>
+              <td className="right muted">{Number(l.purchase_cost)?fmtMoney(l.purchase_cost):"—"}</td>
+              <td className="right">{a?fmtMoney(a):"—"}</td>
+              <td className="right" style={{color:bal<0?"#B03A2E":"inherit",fontWeight:bal<0?700:400}}>{fmtMoney(bal)}</td>
+              <td className="right">{b
+                ? <b style={{color:p>100?"#B03A2E":p>85?"#B26A00":"#2E7D5B"}}>{p}%</b>
+                : <span className="muted">—</span>}</td>
+            </tr>);
+          })}
+          </tbody></table>
+          {lines.some(l=>(Number(l.budget)||0)-(Number(l.actual_all)||0)<0)&&
+            <div style={{fontSize:11.5,color:"#B03A2E",marginTop:6}}>🚩 มี cost code ที่ใช้เกินงบ — พิจารณาโยกงบระหว่าง cost code หรือขออนุมัติเพิ่ม</div>}
+        </td></tr>}
+        </Fragment>);
       })}
       {!shown.length&&<tr><td colSpan="7" className="muted">ไม่พบโครงการที่ค้นหา</td></tr>}
       </tbody>
