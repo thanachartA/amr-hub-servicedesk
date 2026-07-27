@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
-import { notifyMany, uploadAttachments, fmtSize, fileIcon, missingDocs, fmtMoney, addLink } from "../../../components/util";
+import { notifyMany, uploadAttachments, fmtSize, fileIcon, missingDocs, fmtMoney, addLink, fetchAll } from "../../../components/util";
 import DynForm, { missingFields } from "../../../components/DynForm";
 import DocSlots from "../../../components/DocSlots";
 import Combobox from "../../../components/Combobox";
@@ -51,11 +51,12 @@ export default function NewRequest(){
     const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
     const [t,p,c,d,me]=await Promise.all([
       supabase.from("hub_request_types").select("*").eq("is_active",true).order("sort_order"),
-      supabase.from("projects").select("id,code,name,budget_amount").order("code").limit(2000),
+      // ⚠️ PostgREST cap 1000 แถว → ต้อง paginate ให้เห็นโครงการครบทุกตัวใน dropdown
+      fetchAll("projects","id,code,name,budget_amount",b=>b.order("code",{ascending:true})),
       supabase.from("hub_cost_codes").select("*").eq("is_active",true).order("code"),
       supabase.from("hub_departments").select("code,name").eq("is_active",true).order("code"),
       supabase.from("profiles").select("department").eq("id",uid).maybeSingle()]);
-    setTypes(t.data||[]); setProjects(p.data||[]); setCodes(c.data||[]); setDepts(d.data||[]);
+    setTypes(t.data||[]); setProjects(p||[]); setCodes(c.data||[]); setDepts(d.data||[]);
     // default แผนก = แผนกของผู้ขอ (จับคู่ชื่อ/รหัสกับ master) — เปลี่ยนได้
     const pd=me.data?.department;
     if(pd){ const hit=(d.data||[]).find(x=>String(x.name).toLowerCase()===pd.toLowerCase()||String(x.code).toLowerCase()===pd.toLowerCase());
