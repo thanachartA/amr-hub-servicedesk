@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
 import Shell from "../../components/Shell";
 import { supabase } from "../../lib/supabaseClient";
-import { fmtMoney, downloadCSV, readSheetAt, toNum, toDate } from "../../components/util";
+import { fmtMoney, downloadCSV, readSheetAt, toNum, toDate, fetchAll } from "../../components/util";
 
 const APV={pending:"รออนุมัติ",approved:"อนุมัติแล้ว",rejected:"ไม่อนุมัติ"};
 
@@ -33,30 +33,39 @@ function mapHead(head){
 const clean=s=>String(s??"").replace(/[​-‍﻿‌]/g,"").trim();
 
 export default function Projects(){
-  const [pb,setPb]=useState([]); const [detail,setDetail]=useState([]);
+  const [rows0,setRows0]=useState([]);            // สรุปรายโครงการ จาก materialized view (เร็ว)
+  const [detail,setDetail]=useState([]);          // ค่าใช้จ่ายที่ Hub บันทึกเอง
+  const [lineCache,setLineCache]=useState({});    // ref → cost code lines (โหลดตอนกางเท่านั้น)
+  const [loading,setLoading]=useState(true);
   const [canManage,setCanManage]=useState(false);
   const [busy,setBusy]=useState(false); const [result,setResult]=useState(null); const [msg,setMsg]=useState(null);
   const [q,setQ]=useState(""); const [onlyOver,setOnlyOver]=useState(false);
   const [syncProjects,setSyncProjects]=useState(true);
   const [open,setOpen]=useState(()=>new Set());   // ref ของโครงการที่กางดูราย cost code
-  function toggle(ref){ setOpen(s=>{ const n=new Set(s); n.has(ref)?n.delete(ref):n.add(ref); return n; }); }
+
+  // กาง/พับ + โหลด cost code ของโครงการนั้นแบบ lazy (เฉพาะตอนกางครั้งแรก)
+  async function toggle(ref){
+    const opening=!open.has(ref);
+    setOpen(s=>{ const n=new Set(s); n.has(ref)?n.delete(ref):n.add(ref); return n; });
+    if(opening && !lineCache[ref]){
+      setLineCache(c=>({...c,[ref]:"loading"}));
+      const { data }=await supabase.from("hub_project_budget")
+        .select("cost_code,description,budget,purchase_cost,actual_all")
+        .eq("ref_code",ref).order("actual_all",{ascending:false}).limit(1000);
+      setLineCache(c=>({...c,[ref]:data||[]}));
+    }
+  }
 
   async function load(){
+    setLoading(true);
     const { data:sess }=await supabase.auth.getSession();
     const { data:t }=await supabase.from("hub_team").select("hub_role").eq("user_id",sess.session.user.id).maybeSingle();
     setCanManage(["owner","supervisor"].includes(t?.hub_role));
-    // ⚠️ Supabase จำกัด 1000 แถว/คำขอ — ต้องดึงเป็นหน้า ๆ (paginate) ให้ครบทุกแถว
-    const all=[]; const PAGE=1000;
-    for(let from=0;;from+=PAGE){
-      const { data,error }=await supabase.from("hub_project_budget")
-        .select("*").order("id",{ascending:true}).range(from,from+PAGE-1);
-      if(error||!data?.length) break;
-      all.push(...data);
-      if(data.length<PAGE) break;
-    }
+    // อ่านสรุปรายโครงการจาก materialized view (1,639 แถว = 2 request แทน 19k แถว = 20 request)
+    const sum=await fetchAll("hub_project_budget_summary","*",b=>b.order("actual_all",{ascending:false}));
     const { data:e }=await supabase.from("hub_expense_entries")
       .select("amount,approval_status,created_at,project_id,projects(code,name),hub_cost_codes(code,name),hub_requests(ticket_no,title)");
-    setPb(all); setDetail(e||[]);
+    setRows0(sum); setDetail(e||[]); setLineCache({}); setLoading(false);
   }
   useEffect(()=>{ load(); },[]);
 
@@ -68,23 +77,14 @@ export default function Projects(){
     return m;
   },[detail]);
 
-  // รวมเป็นรายโครงการ
-  const rows=useMemo(()=>{
-    const m={};
-    pb.forEach(x=>{
-      const k=x.ref_code;
-      if(!m[k]) m[k]={ref:k,code:x.project_code,name:x.project_name,pm:x.pm_name,
-        budget:0,purchase:0,actual:0,unbook:0,lines:[],asOf:x.as_of};
-      const r=m[k];
-      r.budget+=Number(x.budget)||0;
-      r.purchase+=Number(x.purchase_cost)||0;
-      r.actual+=Number(x.actual_all)||0;
-      r.unbook+=Number(x.unbook)||0;
-      r.lines.push(x);
-    });
-    return Object.values(m).map(r=>({...r, hub:hubByCode[r.ref]||0, balance:r.budget-r.actual}))
-      .sort((a,b)=>b.actual-a.actual);
-  },[pb,hubByCode]);
+  // แปลงแถวสรุปให้พร้อมแสดง
+  const rows=useMemo(()=>rows0.map(r=>({
+    ref:r.ref_code, code:r.project_code, name:r.project_name, pm:r.pm_name,
+    budget:Number(r.budget)||0, purchase:Number(r.purchase_cost)||0,
+    actual:Number(r.actual_all)||0, unbook:Number(r.unbook)||0,
+    lineCount:Number(r.lines)||0, asOf:r.as_of,
+    hub:hubByCode[r.ref_code]||0, balance:Number(r.balance)||0,
+  })),[rows0,hubByCode]);
 
   const shown=useMemo(()=>rows.filter(r=>{
     if(onlyOver && r.balance>=0) return false;
@@ -96,7 +96,8 @@ export default function Projects(){
 
   const tot=rows.reduce((s,r)=>({budget:s.budget+r.budget,actual:s.actual+r.actual,
     purchase:s.purchase+r.purchase,over:s.over+(r.balance<0?1:0)}),{budget:0,actual:0,purchase:0,over:0});
-  const asOf=pb.find(x=>x.as_of)?.as_of;
+  const asOf=rows0.find(x=>x.as_of)?.as_of;
+  const totalLines=rows.reduce((s,r)=>s+r.lineCount,0);
 
   const day=new Date().toISOString().slice(0,10);
   function exportSummary(){
@@ -108,13 +109,18 @@ export default function Projects(){
       {label:"Hub บันทึก",key:"hub"},
     ], rows);
   }
-  function exportLines(){
+  async function exportLines(){
+    setMsg("กำลังเตรียมไฟล์รายละเอียด… (ดึงทุก cost code)");
+    const all=await fetchAll("hub_project_budget",
+      "ref_code,project_code,project_name,cost_code,description,pm_name,budget,purchase_cost,actual_ac,unbook,actual_all",
+      b=>b.order("ref_code",{ascending:true}));
+    setMsg(null);
     downloadCSV("ต้นทุนโครงการ_รายcostcode_"+day+".csv",[
       {label:"Ref. Code",key:"ref_code"},{label:"Project Code",key:"project_code"},{label:"ชื่อโครงการ",key:"project_name"},
       {label:"Cost Code",key:"cost_code"},{label:"Description",key:"description"},{label:"PM",key:"pm_name"},
       {label:"Budget",key:"budget"},{label:"Purchase Cost",key:"purchase_cost"},
       {label:"Actual (A/C)",key:"actual_ac"},{label:"Unbook",key:"unbook"},{label:"Actual (ALL)",key:"actual_all"},
-    ], pb);
+    ], all);
   }
 
   async function importFile(e){
@@ -173,7 +179,7 @@ export default function Projects(){
 
       // 2) sync ทะเบียนโครงการ (ถ้าเลือก)
       let created=0;
-      const { data:projs }=await supabase.from("projects").select("id,code").limit(5000);
+      const projs=await fetchAll("projects","id,code");
       const byCode={}; (projs||[]).forEach(p=>{ if(p.code) byCode[p.code.trim().toLowerCase()]=p.id; });
       if(syncProjects){
         const master={};
@@ -196,6 +202,10 @@ export default function Projects(){
         const { error }=await supabase.from("hub_project_budget").insert(chunk);
         if(error) errors.push("บันทึกไม่สำเร็จ: "+error.message); else ok+=chunk.length;
       }
+      // 4) refresh สรุปรายโครงการ (materialized view)
+      const { error:rpcErr }=await supabase.rpc("hub_refresh_project_summary");
+      if(rpcErr) errors.push("อัปเดตสรุปรายโครงการไม่สำเร็จ: "+rpcErr.message);
+
       const unmatched=recs.filter(x=>!x.project_id).length;
       setResult({ ok, total:recs.length, errors, created, unmatched,
         budget:recs.reduce((s,x)=>s+x.budget,0), actual:recs.reduce((s,x)=>s+x.actual_all,0) });
@@ -205,9 +215,10 @@ export default function Projects(){
   }
 
   async function clearAll(){
-    if(!confirm("ลบข้อมูลต้นทุนโครงการทั้งหมด ("+pb.length+" แถว) ?\n\nย้อนกลับไม่ได้")) return;
+    if(!confirm("ลบข้อมูลต้นทุนโครงการทั้งหมด ("+totalLines+" แถว) ?\n\nย้อนกลับไม่ได้")) return;
     const { error }=await supabase.from("hub_project_budget").delete().neq("id","00000000-0000-0000-0000-000000000000");
     if(error){ setMsg("ลบไม่สำเร็จ: "+error.message); return; }
+    await supabase.rpc("hub_refresh_project_summary");
     setMsg("ลบเรียบร้อย"); setResult(null); await load();
   }
 
@@ -230,8 +241,8 @@ export default function Projects(){
           {busy?"กำลังอ่านไฟล์…":"⬆ อัปโหลด Budget Report (.xlsx)"}
           <input type="file" accept=".xlsx,.xls,.csv" onChange={importFile} disabled={busy} style={{display:"none"}}/>
         </label>
-        {pb.length>0&&<>
-          <button type="button" className="btn sm sec" onClick={exportLines}>⬇ Export รายละเอียด ({pb.length})</button>
+        {totalLines>0&&<>
+          <button type="button" className="btn sm sec" onClick={exportLines}>⬇ Export รายละเอียด ({totalLines})</button>
           <button type="button" className="btn sm sec" style={{color:"#B03A2E"}} onClick={clearAll}>ล้างข้อมูล</button>
         </>}
       </div>
@@ -249,7 +260,9 @@ export default function Projects(){
       </div>)}
     </div>)}
 
-    {pb.length===0 ? (
+    {loading ? (
+      <div className="card"><div className="muted">กำลังโหลดสรุปรายโครงการ…</div></div>
+    ) : rows.length===0 ? (
       <div className="card"><div className="muted">ยังไม่มีข้อมูล — อัปโหลด ERP Budget Report เพื่อดู Budget vs Actual รายโครงการ</div></div>
     ) : (<>
 
@@ -283,13 +296,14 @@ export default function Projects(){
       <tbody>{shown.slice(0,300).map(r=>{
         const pct=r.budget?Math.round(100*r.actual/r.budget):0;
         const isOpen=open.has(r.ref);
-        const lines=[...(r.lines||[])].sort((a,b)=>(Number(b.actual_all)||0)-(Number(a.actual_all)||0));
+        const cached=lineCache[r.ref];
+        const lines=Array.isArray(cached)?[...cached].sort((a,b)=>(Number(b.actual_all)||0)-(Number(a.actual_all)||0)):null;
         return (<Fragment key={r.ref}>
         <tr onClick={()=>toggle(r.ref)} style={{cursor:"pointer",background:isOpen?"#F3F8FF":undefined}}>
           <td><span style={{color:"#98A4AE",marginRight:6,fontSize:11}}>{isOpen?"▾":"▸"}</span>
             <b className="mono" style={{fontSize:12}}>{r.ref}</b>
             <div className="muted" style={{fontSize:11.5,marginLeft:17}}>{r.name}
-              <span style={{color:"#2D6CDF"}}> · {lines.length} cost code</span></div></td>
+              <span style={{color:"#2D6CDF"}}> · {r.lineCount} cost code</span></div></td>
           <td className="muted" style={{fontSize:11.5}}>{r.pm||"—"}</td>
           <td className="right">{r.budget?fmtMoney(r.budget):"—"}</td>
           <td className="right muted">{r.purchase?fmtMoney(r.purchase):"—"}</td>
@@ -304,6 +318,7 @@ export default function Projects(){
             💰 งบตาม Cost Code — {r.ref}
             {r.hub>0&&<span className="muted" style={{fontWeight:400}}> · Hub บันทึกเพิ่ม {fmtMoney(r.hub)}</span>}
           </div>
+          {!lines ? <div className="muted" style={{fontSize:12}}>กำลังโหลด cost code…</div> : (<>
           <table style={{fontSize:12}}><thead><tr>
             <th>Cost Code</th><th>รายละเอียด</th>
             <th className="right">Budget</th><th className="right">Purchase</th>
@@ -326,6 +341,7 @@ export default function Projects(){
           </tbody></table>
           {lines.some(l=>(Number(l.budget)||0)-(Number(l.actual_all)||0)<0)&&
             <div style={{fontSize:11.5,color:"#B03A2E",marginTop:6}}>🚩 มี cost code ที่ใช้เกินงบ — พิจารณาโยกงบระหว่าง cost code หรือขออนุมัติเพิ่ม</div>}
+          </>)}
         </td></tr>}
         </Fragment>);
       })}
@@ -344,7 +360,7 @@ export default function Projects(){
         แสดง 300 แถวแรกจาก {shown.length} — ใช้ช่องค้นหา หรือกด Export เพื่อดูทั้งหมด</p>}
       <p className="muted" style={{fontSize:11.5,marginTop:10}}>
         <b>Actual (ALL)</b> = Actual Cost (A/C) + Unbook · <b>Balance</b> = Budget − Actual (ALL) ·
-        ตัวเลขทั้งหมดมาจาก ERP โดยตรง (snapshot ณ วันที่ export)
+        รายการสรุปมาจาก materialized view (รีเฟรชอัตโนมัติเมื่อ import) · กดที่โครงการเพื่อดู cost code
       </p>
     </div>
     </>)}
