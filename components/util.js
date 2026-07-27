@@ -100,6 +100,21 @@ export async function deleteRequestDeep(requestId){
   return error ? error.message : null;
 }
 
+// ---- ลิงก์เอกสารภายนอก (OneDrive/SharePoint/Drive) สำหรับไฟล์ใหญ่ ----
+// เก็บใน hub_attachments.file_url (file_path ว่าง = เป็นลิงก์ ไม่ใช่ไฟล์ที่อัปโหลด)
+export function isLink(a){ return !!(a && a.file_url && !a.file_path); }
+export function openLink(url){
+  const u=String(url||"").trim(); if(!u) return;
+  window.open(/^https?:\/\//i.test(u)?u:("https://"+u),"_blank","noopener");
+}
+export async function addLink(requestId, uid, url, label, slotKey){
+  const u=String(url||"").trim(); if(!u) return "ไม่มีลิงก์";
+  const { error }=await supabase.from("hub_attachments").insert({
+    request_id:requestId, uploaded_by:uid, file_url:u,
+    file_name:(label&&label.trim())||u, mime_type:"link", slot_key:slotKey||null });
+  return error?error.message:null;
+}
+
 // เปิดไฟล์ด้วย signed URL (ไฟล์เป็น private)
 export async function openAttachment(path){
   const { data, error }=await supabase.storage.from(ATT_BUCKET).createSignedUrl(path,120);
