@@ -45,12 +45,18 @@ export default function Projects(){
     const { data:sess }=await supabase.auth.getSession();
     const { data:t }=await supabase.from("hub_team").select("hub_role").eq("user_id",sess.session.user.id).maybeSingle();
     setCanManage(["owner","supervisor"].includes(t?.hub_role));
-    const [p,e]=await Promise.all([
-      supabase.from("hub_project_budget").select("*").limit(20000),
-      supabase.from("hub_expense_entries")
-        .select("amount,approval_status,created_at,project_id,projects(code,name),hub_cost_codes(code,name),hub_requests(ticket_no,title)"),
-    ]);
-    setPb(p.data||[]); setDetail(e.data||[]);
+    // ⚠️ Supabase จำกัด 1000 แถว/คำขอ — ต้องดึงเป็นหน้า ๆ (paginate) ให้ครบทุกแถว
+    const all=[]; const PAGE=1000;
+    for(let from=0;;from+=PAGE){
+      const { data,error }=await supabase.from("hub_project_budget")
+        .select("*").order("id",{ascending:true}).range(from,from+PAGE-1);
+      if(error||!data?.length) break;
+      all.push(...data);
+      if(data.length<PAGE) break;
+    }
+    const { data:e }=await supabase.from("hub_expense_entries")
+      .select("amount,approval_status,created_at,project_id,projects(code,name),hub_cost_codes(code,name),hub_requests(ticket_no,title)");
+    setPb(all); setDetail(e||[]);
   }
   useEffect(()=>{ load(); },[]);
 
