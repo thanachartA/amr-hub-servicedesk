@@ -8,6 +8,8 @@ const APV={pending:"รออนุมัติ",approved:"อนุมัติ
 
 // หัวคอลัมน์ของ ERP Budget Report (sheet "BudgetReport")
 const A={
+  g_code:["g-code","gcode"],
+  s_code:["s-code","scode"],
   ref_code:["ref._code","ref_code","refcode","ref"],
   project_code:["project_code","projectcode","project_no","รหัสโครงการ"],
   project_name:["project_name","projectname","ชื่อโครงการ"],
@@ -114,34 +116,47 @@ export default function Projects(){
     if(!file) return;
     setBusy(true); setResult(null); setMsg(null);
     try{
-      const { grid, headerRow }=await readSheetAt(file,{ sheetName:"BudgetReport", mustHave:["ref._code","cost_code","budget"] });
-      if(grid.length<2) throw new Error("ไฟล์ว่าง หรือหาหัวตารางไม่เจอ");
+      // ✅ ใช้ sheet 'ERP_Budget Report' (มี cost code ครบทุกระดับ) ก่อน — ไม่งั้น fallback 'BudgetReport'
+      let erp=true, grid, headerRow;
+      try{ ({ grid, headerRow }=await readSheetAt(file,{ sheetName:"ERP_Budget Report", mustHave:["s-code","budget"] })); }
+      catch(_){ erp=false; ({ grid, headerRow }=await readSheetAt(file,{ sheetName:"BudgetReport", mustHave:["ref._code","budget"] })); }
+      if(!grid || grid.length<2) throw new Error("ไฟล์ว่าง หรือหาหัวตารางไม่เจอ (ต้องมี sheet \"ERP_Budget Report\")");
       const ix=mapHead(grid[0]);
-      const need=["ref_code","budget"].filter(k=>ix[k]<0);
-      if(need.length) throw new Error("ไม่พบคอลัมน์: "+need.join(", ")+" — ต้องเป็น sheet \"BudgetReport\" จาก ERP");
+      if(ix.ref_code<0||ix.budget<0) throw new Error("ไม่พบคอลัมน์ Ref. Code / Budget");
 
       const { data:sess }=await supabase.auth.getSession(); const uid=sess.session.user.id;
       const g=(row,k)=>ix[k]>=0?clean(row[ix[k]]):"";
       const n=(row,k)=>{ const v=toNum(g(row,k)); return isNaN(v)?0:v; };
+      const rec=(ref,cc,desc,name)=>({
+        ref_code:ref, project_code:g(cc.__row,"project_code")||null, project_name:name||null,
+        cost_code:cc.code||null, description:desc||null, pm_name:cc.pm||null,
+        budget:n(cc.__row,"budget"), purchase_cost:n(cc.__row,"purchase_cost"),
+        actual_ac:n(cc.__row,"actual_ac"), unbook:n(cc.__row,"unbook"),
+        actual_all: ix.actual_all>=0 ? n(cc.__row,"actual_all") : (n(cc.__row,"actual_ac")+n(cc.__row,"unbook")),
+        as_of:new Date().toISOString().slice(0,10), source_file:file.name, imported_by:uid });
 
-      const recs=[]; const errors=[]; const seen={};
+      const recs=[]; const errors=[]; const seen={}; let curName="";
       for(let r=1;r<grid.length;r++){
         const row=grid[r];
-        const ref=g(row,"ref_code");
-        if(!ref) continue;
-        const cc=g(row,"cost_code")||"";
-        const key=ref+"|"+cc;
-        if(seen[key]){ errors.push("แถว "+(r+headerRow+1)+": ซ้ำในไฟล์ ("+ref+" / "+cc+")"); continue; }
-        seen[key]=1;
-        recs.push({
-          ref_code:ref, project_code:g(row,"project_code")||null, project_name:g(row,"project_name")||null,
-          cost_code:cc, description:g(row,"description")||null, pm_name:g(row,"pm_name")||null,
-          budget:n(row,"budget"), purchase_cost:n(row,"purchase_cost"),
-          actual_ac:n(row,"actual_ac"), unbook:n(row,"unbook"),
-          actual_all: ix.actual_all>=0 ? n(row,"actual_all") : (n(row,"actual_ac")+n(row,"unbook")),
-          as_of:new Date().toISOString().slice(0,10),
-          source_file:file.name, imported_by:uid,
-        });
+        const ref=g(row,"ref_code"), gc=g(row,"g_code"), sc=g(row,"s_code"), desc=g(row,"description");
+        if(erp){
+          if(!ref){ // แถวหัวโครงการ ("Code : Name (Ref)") หรือแถวสรุปท้าย
+            if(!/^total for project/i.test(gc) && desc && /\s:\s/.test(desc))
+              curName=desc.split(/\s:\s/).slice(1).join(" : ").replace(/\s*\([^)]*\)\s*$/,"").trim();
+            continue;
+          }
+          if(/^total for project/i.test(gc)) continue;
+          if(!sc) continue;                       // ข้าม group/ยอดรวม (C000000) เก็บเฉพาะ leaf → ไม่นับซ้ำ
+          const key=ref+"|"+sc; if(seen[key]) continue; seen[key]=1;
+          recs.push(rec(ref,{code:sc,__row:row},desc,curName));
+        } else {
+          if(!ref) continue;
+          const cc=g(row,"cost_code")||"";
+          const key=ref+"|"+cc;
+          if(seen[key]){ errors.push("แถว "+(r+headerRow+1)+": ซ้ำในไฟล์ ("+ref+" / "+cc+")"); continue; }
+          seen[key]=1;
+          recs.push(rec(ref,{code:cc,__row:row,pm:g(row,"pm_name")},g(row,"description"),g(row,"project_name")));
+        }
       }
       if(!recs.length) throw new Error("ไม่มีแถวที่ใช้ได้เลย");
 
@@ -197,7 +212,7 @@ export default function Projects(){
       <h2>📥 นำเข้า ERP Budget Report</h2>
       <p className="muted" style={{fontSize:12.5,lineHeight:1.8,marginTop:-4}}>
         อัปโหลดไฟล์ <span className="mono">Budget Report_*.xlsx</span> ที่ export จาก ERP ได้ตรง ๆ —
-        ระบบอ่าน sheet <b>BudgetReport</b> และหาหัวตารางเอง<br/>
+        ระบบอ่าน sheet <b>ERP_Budget Report</b> (cost code ครบทุกระดับ · เก็บเฉพาะบรรทัดย่อย S-Code ไม่นับซ้ำ)<br/>
         ใช้ <b>Ref. Code</b> เป็นตัวแมตช์โครงการ · เป็น <b>snapshot</b> → อัปโหลดใหม่ = <b>แทนที่ของเดิมทั้งชุด</b> (ข้อมูลไม่บาน)
       </p>
       <label style={{display:"flex",alignItems:"center",gap:8,margin:"10px 0",fontSize:12.5,cursor:"pointer"}}>
