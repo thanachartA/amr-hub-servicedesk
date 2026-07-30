@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Shell from "../../components/Shell";
 import { supabase } from "../../lib/supabaseClient";
-import { downloadCSV, parseCSV } from "../../components/util";
+import { downloadCSV, parseCSV, fetchAll } from "../../components/util";
 import FormBuilder from "../../components/FormBuilder";
 import DynForm from "../../components/DynForm";
 
@@ -123,7 +123,8 @@ export default function Admin(){
     setStaff((t||[]).filter(x=>x.profiles).map(x=>({id:x.profiles.id,name:x.profiles.full_name,email:x.profiles.email,role:x.hub_role,avail:x.is_available})));
     const { data:rt }=await supabase.from("hub_request_types").select("id,name,category,routing_mode,primary_owner_id,backup_owner_id,default_sla_hours,form_schema,require_attachment,prep_note").eq("is_active",true).order("sort_order");
     setTypes(rt||[]);
-    const { data:pj }=await supabase.from("projects").select("id,code,name,hub_owner_id,hub_backup_owner_id").order("code").limit(500);
+    // ดึงโครงการครบทุกตัว (PostgREST cap 1000/คำขอ → paginate)
+    const pj=await fetchAll("projects","id,code,name,hub_owner_id,hub_backup_owner_id",b=>b.order("code",{ascending:true}));
     setProjects(pj||[]);
     const { data:dp }=await supabase.from("hub_departments").select("code,name,hub_owner_id,hub_backup_owner_id").eq("is_active",true).order("code");
     setDepts(dp||[]);
