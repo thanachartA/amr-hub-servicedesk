@@ -4,9 +4,9 @@ import Shell from "../../components/Shell";
 import { supabase } from "../../lib/supabaseClient";
 import { StatusBadge, fmtDate, downloadCSV } from "../../components/util";
 
-const TH={new:"ใหม่",assigned:"มอบหมายแล้ว",in_progress:"กำลังทำ",waiting:"รอข้อมูล",review:"รอตรวจ",done:"เสร็จ",closed:"ปิด",cancelled:"ยกเลิก"};
+const TH={new:"ใหม่",assigned:"มอบหมายแล้ว",in_progress:"กำลังทำ",waiting:"รอข้อมูล",review:"รอตรวจ",revising:"รอแก้ไข",done:"เสร็จ",closed:"ปิด",cancelled:"ยกเลิก"};
 
-const OPEN2=["new","assigned","in_progress","waiting","review"];
+const OPEN2=["new","assigned","in_progress","waiting","review","revising"];
 export default function Requests(){
   const [rows,setRows]=useState([]); const [f,setF]=useState("open"); const [uid,setUid]=useState(null);
   // มุมมองพิเศษจาก Dashboard (?view=mine / overdue / unassigned / review)
@@ -54,7 +54,7 @@ export default function Requests(){
         <button className="btn sm sec" style={{marginLeft:"auto"}} onClick={()=>setView(null)}>ล้างตัวกรอง</button>
       </div>}
       <div style={{marginBottom:12,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",opacity:view?0.5:1}}>
-        {[["open","เปิดอยู่"],["all","ทั้งหมด"],["new","ใหม่"],["in_progress","กำลังทำ"],["waiting","รอข้อมูล"],["review","รอตรวจ"],["rejected","❌ ไม่อนุมัติ"],["closed","ปิด"]].map(([v,l])=>(
+        {[["open","เปิดอยู่"],["all","ทั้งหมด"],["new","ใหม่"],["in_progress","กำลังทำ"],["waiting","รอข้อมูล"],["review","รอตรวจ"],["revising","รอแก้ไข"],["rejected","❌ ไม่อนุมัติ"],["closed","ปิด"]].map(([v,l])=>(
           <button key={v} className={"btn sm "+(f===v&&!view?"":"sec")} onClick={()=>{setView(null);setF(v);}}>{l}</button>))}
         <button className="btn sm sec" style={{marginLeft:"auto"}} onClick={exportCSV}>⬇ Export CSV ({shown.length})</button>
       </div>
