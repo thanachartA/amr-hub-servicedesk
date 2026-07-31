@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Fragment } from "react";
 import { useParams } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
@@ -19,7 +19,7 @@ const APV_STYLE={
 
 export default function RequestDetail(){
   const { id }=useParams();
-  const [r,setR]=useState(null); const [exp,setExp]=useState([]); const [log,setLog]=useState([]);
+  const [r,setR]=useState(null); const [exp,setExp]=useState([]); const [expLines,setExpLines]=useState([]); const [log,setLog]=useState([]);
   const [team,setTeam]=useState([]); const [uid,setUid]=useState(null); const [staff,setStaff]=useState(false); const [canManage,setCanManage]=useState(false); const [canAssign,setCanAssign]=useState(false);
   const [assignee,setAssignee]=useState(""); const [msg,setMsg]=useState(null);
   const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
@@ -85,6 +85,8 @@ export default function RequestDetail(){
     setR(req); setAssignee(req?.assignee_id||"");
     const { data:e }=await supabase.from("hub_expense_entries").select("*,projects(code,name,budget_amount),hub_cost_codes(code,name)").eq("request_id",id);
     setExp(e||[]);
+    const { data:xl }=await supabase.from("hub_expense_lines").select("*,hub_cost_codes(code,name)").eq("request_id",id).order("created_at",{ascending:true});
+    setExpLines(xl||[]);
     const { data:l }=await supabase.from("hub_activity_log").select("*,actor:actor_id(full_name)").eq("request_id",id).order("created_at",{ascending:true});
     setLog(l||[]);
     const { data:at }=await supabase.from("hub_attachments").select("*,uploader:uploaded_by(full_name)").eq("request_id",id).order("created_at",{ascending:true});
@@ -360,9 +362,10 @@ export default function RequestDetail(){
             const over=Number(x.amount)>threshold;
             const canAct = (st==="pending_supervisor" && (role==="owner"||role==="supervisor"))
                         || (st==="pending_owner" && role==="owner");
-            return (<tr key={x.id}>
+            const myLines=expLines.filter(L=>L.entry_id===x.id);
+            return (<Fragment key={x.id}><tr>
               <td>{x.projects?<span>{x.projects.code} · {x.projects.name}</span>:<span className="muted">—</span>}</td>
-              <td>{x.hub_cost_codes?x.hub_cost_codes.code:"—"}</td>
+              <td>{x.hub_cost_codes?x.hub_cost_codes.code:(myLines.length?<span className="muted">{myLines.length} cost</span>:"—")}</td>
               <td className="right"><b>{fmtMoney(x.amount)}</b>
                 {over&&<div style={{fontSize:10.5,color:"#B26A00"}}>เกินวงเงิน</div>}</td>
               <td>
@@ -393,7 +396,22 @@ export default function RequestDetail(){
                     </button>)
                 : <span className="muted">—</span>}
               </td>
-            </tr>);
+            </tr>
+            {myLines.length>0&&<tr><td colSpan="5" style={{background:"#F7FAF8",padding:"6px 10px 10px 20px"}}>
+              <div style={{fontSize:11.5,fontWeight:700,color:"#2E7D5B",margin:"2px 0 5px"}}>💵 รายการย่อย (Clear Advance)</div>
+              <table style={{fontSize:12,margin:0}}><tbody>
+              {myLines.map(L=>(<tr key={L.id}>
+                <td className="mono" style={{width:"28%"}}>{L.hub_cost_codes?L.hub_cost_codes.code+" · "+L.hub_cost_codes.name:"—"}</td>
+                <td className="muted">{L.description||"—"}</td>
+                <td className="right" style={{width:120}}><b>{fmtMoney(L.amount)}</b></td>
+              </tr>))}
+              <tr style={{borderTop:"1px solid #DDE6E0",fontWeight:700}}>
+                <td colSpan="2" className="right">รวม</td>
+                <td className="right">{fmtMoney(myLines.reduce((s,L)=>s+(Number(L.amount)||0),0))}</td>
+              </tr>
+              </tbody></table>
+            </td></tr>}
+            </Fragment>);
           })}</tbody></table></div>)}
         <div className="card"><h2>Timeline</h2>
           {log.map(l=>(<div key={l.id} style={{padding:"7px 0",borderBottom:"1px solid #EEF1F3",fontSize:13}}>
