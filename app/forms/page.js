@@ -5,7 +5,9 @@ import { supabase } from "../../lib/supabaseClient";
 import FormBuilder from "../../components/FormBuilder";
 import DynForm from "../../components/DynForm";
 
-const CAT={ finance:"💰 การเงิน & เบิกจ่าย", procurement:"🛒 จัดซื้อ & Vendor", ga:"🏢 ธุรการ & ยานพาหนะ" };
+const CAT={ finance:"💰 การเงิน & เบิกจ่าย", procurement:"🛒 จัดซื้อ & Vendor", ga:"🏢 ธุรการ & ยานพาหนะ",
+  hr:"👥 การเปลี่ยนข้อมูลในระบบ ByteHR / การเบิกสวัสดิการอื่นๆ", inventory:"📦 สินค้า & ทรัพย์สิน",
+  project:"📊 งานโครงการ", quality:"📋 เอกสาร & คุณภาพ" };
 
 export default function Forms(){
   const [ok,setOk]=useState(false); const [ready,setReady]=useState(false); const [role,setRole]=useState(null);
