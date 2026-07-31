@@ -209,7 +209,7 @@ export default function RequestDetail(){
     setMsg("ขอบคุณสำหรับการประเมิน"); load();
   }
   const now=new Date();
-  const active=["assigned","in_progress","waiting"].includes(r.status);
+  const active=["assigned","in_progress","waiting","revising"].includes(r.status);
   const canRate = r.status==="closed" && uid===r.requester_id;
   return (<Shell title={"คำขอ "+(r.ticket_no||"")}>
     {msg&&<div className="ok">{msg}</div>}
