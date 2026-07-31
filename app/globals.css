@@ -54,7 +54,7 @@ tr:hover td{background:var(--card)}
 .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
 .b-new{background:#E4EAF5;color:#2453A8}.b-assigned{background:#E0F3F5;color:#0B7C88}
 .b-in_progress{background:#FFF3DE;color:#B87400}.b-waiting{background:#FCEAE1;color:#C6491F}
-.b-review{background:#ECEAFB;color:#5A3EE0}.b-done{background:#E3F4EA;color:var(--green)}.b-closed{background:#E7F5ED;color:#12833F}.b-cancelled{background:#EEE;color:#777}
+.b-review{background:#ECEAFB;color:#5A3EE0}.b-revising{background:#FDECEE;color:#B03A2E}.b-done{background:#E3F4EA;color:var(--green)}.b-closed{background:#E7F5ED;color:#12833F}.b-cancelled{background:#EEE;color:#777}
 .field{margin-bottom:14px}.field label{display:block;font-size:12.5px;color:var(--gray);margin-bottom:5px;font-weight:600}
 .field input,.field select,.field textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:13.5px;font-family:inherit;background:#fff}
 .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--navy);box-shadow:0 0 0 3px rgba(5,36,96,.12)}
