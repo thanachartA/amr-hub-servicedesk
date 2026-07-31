@@ -13,7 +13,7 @@ const CAT={
   finance:{label:"💰 การเงิน & เบิกจ่าย",order:1},
   procurement:{label:"🛒 จัดซื้อ & Vendor",order:2},
   ga:{label:"🏢 ธุรการ & ยานพาหนะ",order:3},
-  hr:{label:"👥 บุคคล & กะพนักงาน",order:4},
+  hr:{label:"👥 การเปลี่ยนข้อมูลในระบบ ByteHR / การเบิกสวัสดิการอื่นๆ",order:4},
   inventory:{label:"📦 สินค้า & ทรัพย์สิน",order:5},
   project:{label:"📊 งานโครงการ",order:6},
   quality:{label:"📋 เอกสาร & คุณภาพ",order:7},
