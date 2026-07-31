@@ -47,6 +47,7 @@ export default function NewRequest(){
   const [memoFile,setMemoFile]=useState(null);  // MEMO โยกงบ (Opex)
   const [excomFile,setExcomFile]=useState(null);// มติ Excom (Capex)
   const [excomAck,setExcomAck]=useState(false);
+  const [advLines,setAdvLines]=useState([{cost:"",amount:"",note:""}]);  // Clear Advance: หลาย cost ใน 1 OF
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
     const [t,p,c,d,me]=await Promise.all([
@@ -68,9 +69,12 @@ export default function NewRequest(){
     const { data }=await supabase.rpc("hub_project_budget_left",{ p_project:form.project });
     setBud(data||null);
   })(); },[form.project]);
-  const amt=Number(String(form.amount).replace(/[,\s]/g,""))||0;
-  const overBudget = bud?.has_budget && amt>0 && amt > Number(bud.left);
   const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
+  // Advance / Clear Advance = 1 OF มีได้หลาย cost → ยอดรวมทั้งใบใช้เช็คงบ/อนุมัติ
+  const isAdvance = !!needExpense && /advance/i.test(sel?.name||"");
+  const advTotal = advLines.reduce((s,l)=>s+(Number(String(l.amount).replace(/[,\s]/g,""))||0),0);
+  const amt = isAdvance ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0);
+  const overBudget = bud?.has_budget && amt>0 && amt > Number(bud.left);
   // ── ตรวจความพร้อมของ governance เมื่องบไม่พอ ──
   const shortfall = overBudget ? (amt - Number(bud.left)) : 0;
   const tAmtNum = Number(String(tAmt).replace(/[,\s]/g,""))||0;
@@ -93,8 +97,13 @@ export default function NewRequest(){
     if(k==="type"){ setDocs({}); setFiles([]); setFd({});
       setEtype(""); setTScope("in_dept"); setTFrom(""); setTAmt(""); setCfo(false); setCeo(false);
       setMemoFile(null); setExcomFile(null); setExcomAck(false);
+      setAdvLines([{cost:"",amount:"",note:""}]);
       setLinks([]); setLU(""); setLL(""); }
   }
+  // ── หลาย cost line (Clear Advance) ──
+  const setLine=(i,k,v)=>setAdvLines(a=>a.map((l,idx)=>idx===i?{...l,[k]:v}:l));
+  const addLine=()=>setAdvLines(a=>[...a,{cost:"",amount:"",note:""}]);
+  const rmLine=(i)=>setAdvLines(a=>a.length>1?a.filter((_,idx)=>idx!==i):a);
   async function submit(e){ e.preventDefault(); setErr(null);
     // ⛔ บังคับกรอกให้ครบก่อนส่ง
     const miss=missingFields(sel?.form_schema, fd);
@@ -115,6 +124,12 @@ export default function NewRequest(){
       setErr("กรุณาเลือกประเภทงบ — Opex (ดำเนินงาน) หรือ Capex (ลงทุน)");
       window.scrollTo({top:0,behavior:"smooth"}); return;
     }
+    // ⛔ Clear Advance: ทุกบรรทัดที่มีเงิน ต้องเลือก Cost Code + มีอย่างน้อย 1 บรรทัด
+    if(isAdvance){
+      const paid=advLines.filter(l=>(Number(String(l.amount).replace(/[,\s]/g,""))||0)>0);
+      if(!paid.length){ setErr("Clear Advance ต้องมีอย่างน้อย 1 รายการที่มีจำนวนเงิน"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      if(paid.some(l=>!l.cost)){ setErr("ทุกบรรทัดที่มีจำนวนเงิน ต้องเลือก Cost Code"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+    }
     // ⛔ งบไม่พอ → ต้องผ่าน governance (โยกงบ Opex / มติ Excom Capex) ก่อน
     if(overBudget && !govReady){
       setErr("งบโครงการไม่พอ (ขาด "+fmtMoney(shortfall)+" บาท) — "+govMsg);
@@ -129,15 +144,24 @@ export default function NewRequest(){
       project_id: form.project||null, department_code: form.department||null, form_data: fd
     }).select().single();
     if(error){ setErr(error.message); setBusy(false); return; }
-    if(needExpense && form.amount){
-      // สถานะอนุมัติถูกกำหนดโดย trigger ฝั่ง DB (มีเงิน > 0 → รอ Supervisor เสมอ)
-      await supabase.from("hub_expense_entries").insert({
-        request_id:req.id, project_id:form.project||null, cost_code_id:form.cost||null,
-        amount:Number(form.amount),
+    if(needExpense && amt>0){
+      // 1 entry รวม (amount = ยอดรวมทั้งใบ) คุมอนุมัติ+งบ · สถานะอนุมัติกำหนดโดย trigger DB
+      const { data:entry }=await supabase.from("hub_expense_entries").insert({
+        request_id:req.id, project_id:form.project||null,
+        cost_code_id: isAdvance ? null : (form.cost||null),
+        amount: amt,
         expense_type: etype||null,
         out_of_budget: !!overBudget,
         ob_kind: overBudget ? (etype==="opex"?"transfer":"excom") : null
-      });
+      }).select("id").single();
+      // breakdown รายบรรทัด (Clear Advance)
+      if(isAdvance && entry){
+        const lines=advLines
+          .filter(l=>(Number(String(l.amount).replace(/[,\s]/g,""))||0)>0)
+          .map(l=>({ request_id:req.id, entry_id:entry.id, cost_code_id:l.cost||null,
+                     amount:Number(String(l.amount).replace(/[,\s]/g,""))||0, description:l.note||null }));
+        if(lines.length) await supabase.from("hub_expense_lines").insert(lines);
+      }
     }
     // งบไม่พอ + Opex → บันทึกการโยกงบ (ปรับตัวเลขงบจริง)
     if(overBudget && etype==="opex"){
@@ -222,6 +246,33 @@ export default function NewRequest(){
                 </label>))}
             </div>
           </div>
+          {isAdvance ? (
+          <div className="field">
+            <label>รายการค่าใช้จ่าย (Clear Advance — ใส่ได้หลาย Cost) *</label>
+            <div style={{border:"1px solid #CFE3D6",borderRadius:8,overflow:"hidden"}}>
+              <table style={{margin:0,fontSize:12.5}}><thead><tr style={{background:"#F0F7F2"}}>
+                <th style={{width:"34%"}}>Cost Code</th><th>รายละเอียด</th>
+                <th className="right" style={{width:130}}>จำนวนเงิน</th><th style={{width:34}}></th>
+              </tr></thead><tbody>
+              {advLines.map((l,i)=>(<tr key={i}>
+                <td><select value={l.cost} onChange={e=>setLine(i,"cost",e.target.value)} style={{width:"100%"}}>
+                  <option value="">— เลือก —</option>{codes.map(c=>(<option key={c.id} value={c.id}>{c.code} · {c.name}</option>))}
+                </select></td>
+                <td><input value={l.note} onChange={e=>setLine(i,"note",e.target.value)} placeholder="เช่น ค่าเดินทาง..." style={{width:"100%"}}/></td>
+                <td><input type="number" value={l.amount} onChange={e=>setLine(i,"amount",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
+                <td style={{textAlign:"center"}}>{advLines.length>1&&
+                  <button type="button" onClick={()=>rmLine(i)} title="ลบบรรทัด"
+                    style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}</td>
+              </tr>))}
+              </tbody>
+              <tfoot><tr style={{borderTop:"2px solid #DDE6E0",fontWeight:700,background:"#FAFDFB"}}>
+                <td colSpan="2"><button type="button" onClick={addLine} className="btn sm sec" style={{fontSize:12}}>+ เพิ่มบรรทัด</button></td>
+                <td className="right" style={{color:overBudget?"#B03A2E":"#2E7D5B"}}>รวม {fmtMoney(advTotal)}</td><td></td>
+              </tr></tfoot></table>
+            </div>
+            {overBudget&&<div style={{fontSize:11.5,color:"#B03A2E",fontWeight:700,marginTop:4}}>🚫 ยอดรวมเกินงบคงเหลือ {fmtMoney(amt-Number(bud.left))}</div>}
+          </div>
+          ) : (
           <div className="row2">
             <div className="field"><label>Cost Code</label>
               <select value={form.cost} onChange={e=>up("cost",e.target.value)}>
@@ -233,6 +284,7 @@ export default function NewRequest(){
                 🚫 เกินงบคงเหลือ {fmtMoney(amt-Number(bud.left))}</div>}
             </div>
           </div>
+          )}
           {/* งบคงเหลือของโครงการ */}
           {bud&&form.project&&(bud.has_budget
             ? <div style={{marginTop:6,padding:"8px 12px",borderRadius:8,fontSize:12.5,
