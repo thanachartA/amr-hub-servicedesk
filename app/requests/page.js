@@ -17,15 +17,17 @@ export default function Requests(){
   },[]);
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); setUid(sess?.session?.user?.id||null);
-    let q=supabase.from("hub_requests").select("id,ticket_no,title,status,priority,sla_due_at,created_at,rework_count,assignee_id,hub_request_types(name),requester:requester_id(full_name),assignee:assignee_id(full_name)").order("created_at",{ascending:false}).limit(500);
+    let q=supabase.from("hub_requests").select("id,ticket_no,title,status,priority,sla_due_at,created_at,rework_count,assignee_id,hub_request_types(name),requester:requester_id(full_name),assignee:assignee_id(full_name),hub_expense_entries(approval_status)").order("created_at",{ascending:false}).limit(500);
     const { data }=await q; setRows(data||[]);
   })(); },[]);
   const now=new Date();
+  const isRej=r=>(r.hub_expense_entries||[]).some(e=>e.approval_status==="rejected");   // มีค่าใช้จ่ายถูกไม่อนุมัติ
   const shown=rows.filter(r=>{
     if(view==="mine")       return r.assignee_id===uid && OPEN2.includes(r.status);
     if(view==="overdue")    return r.sla_due_at && new Date(r.sla_due_at)<now && !["review","closed","cancelled"].includes(r.status);
     if(view==="unassigned") return r.status==="new" && !r.assignee_id;
     if(view==="review")     return r.status==="review";
+    if(f==="rejected")      return isRej(r);
     return f==="all"?true : f==="open"?!["closed","cancelled"].includes(r.status) : r.status===f;
   });
   const viewLabel={mine:"งานที่มอบหมายให้ฉัน",overdue:"เกิน SLA",unassigned:"ยังไม่มอบหมาย",review:"รอตรวจ"}[view];
@@ -37,6 +39,7 @@ export default function Requests(){
       {label:"ผู้ขอ",get:r=>r.requester?.full_name||""},
       {label:"ผู้รับผิดชอบ",get:r=>r.assignee?.full_name||""},
       {label:"สถานะ",get:r=>TH[r.status]||r.status},
+      {label:"ค่าใช้จ่าย",get:r=>isRej(r)?"ไม่อนุมัติ":((r.hub_expense_entries||[]).some(e=>e.approval_status==="approved")?"อนุมัติ":"")},
       {label:"ความเร่งด่วน",key:"priority"},
       {label:"ตีกลับ(ครั้ง)",get:r=>r.rework_count||0},
       {label:"วันที่สร้าง",get:r=>r.created_at?new Date(r.created_at).toLocaleString("th-TH"):""},
@@ -51,7 +54,7 @@ export default function Requests(){
         <button className="btn sm sec" style={{marginLeft:"auto"}} onClick={()=>setView(null)}>ล้างตัวกรอง</button>
       </div>}
       <div style={{marginBottom:12,display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",opacity:view?0.5:1}}>
-        {[["open","เปิดอยู่"],["all","ทั้งหมด"],["new","ใหม่"],["in_progress","กำลังทำ"],["waiting","รอข้อมูล"],["review","รอตรวจ"],["closed","ปิด"]].map(([v,l])=>(
+        {[["open","เปิดอยู่"],["all","ทั้งหมด"],["new","ใหม่"],["in_progress","กำลังทำ"],["waiting","รอข้อมูล"],["review","รอตรวจ"],["rejected","❌ ไม่อนุมัติ"],["closed","ปิด"]].map(([v,l])=>(
           <button key={v} className={"btn sm "+(f===v&&!view?"":"sec")} onClick={()=>{setView(null);setF(v);}}>{l}</button>))}
         <button className="btn sm sec" style={{marginLeft:"auto"}} onClick={exportCSV}>⬇ Export CSV ({shown.length})</button>
       </div>
@@ -59,7 +62,9 @@ export default function Requests(){
       <tbody>{shown.map(r=>(<tr key={r.id} onClick={()=>location.href="/requests/"+r.id} style={{cursor:"pointer"}}>
         <td className="mono">{r.ticket_no}</td><td>{r.title}</td><td>{r.hub_request_types?.name}</td>
         <td>{r.assignee?.full_name||<span className="muted">ยังไม่มอบหมาย</span>}</td>
-        <td><StatusBadge s={r.status}/></td><td className="muted">{fmtDate(r.sla_due_at)}</td></tr>))}
+        <td><StatusBadge s={r.status}/>
+          {isRej(r)&&<span className="tag" style={{marginLeft:6,background:"#FDECEE",color:"#B03A2E",border:"1px solid #F3C9CE",fontSize:10.5,fontWeight:700}}>❌ ค่าใช้จ่ายไม่อนุมัติ</span>}
+        </td><td className="muted">{fmtDate(r.sla_due_at)}</td></tr>))}
         {!shown.length&&<tr><td colSpan="6" className="muted">ไม่มีรายการ</td></tr>}</tbody></table>
     </div>
   </Shell>);
