@@ -63,7 +63,7 @@ export default function Requests(){
         <td className="mono">{r.ticket_no}</td><td>{r.title}</td><td>{r.hub_request_types?.name}</td>
         <td>{r.assignee?.full_name||<span className="muted">ยังไม่มอบหมาย</span>}</td>
         <td><StatusBadge s={r.status}/>
-          {isRej(r)&&<span className="tag" style={{marginLeft:6,background:"#FDECEE",color:"#B03A2E",border:"1px solid #F3C9CE",fontSize:10.5,fontWeight:700}}>❌ ค่าใช้จ่ายไม่อนุมัติ</span>}
+          {isRej(r)&&r.status!=="revising"&&<div style={{marginTop:3,fontSize:10.5,color:"#B03A2E",fontWeight:700}}>❌ ค่าใช้จ่ายไม่อนุมัติ</div>}
         </td><td className="muted">{fmtDate(r.sla_due_at)}</td></tr>))}
         {!shown.length&&<tr><td colSpan="6" className="muted">ไม่มีรายการ</td></tr>}</tbody></table>
     </div>
