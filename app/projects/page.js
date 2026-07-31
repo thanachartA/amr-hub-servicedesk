@@ -202,9 +202,11 @@ export default function Projects(){
         const { error }=await supabase.from("hub_project_budget").insert(chunk);
         if(error) errors.push("บันทึกไม่สำเร็จ: "+error.message); else ok+=chunk.length;
       }
-      // 4) refresh สรุปรายโครงการ (materialized view)
+      // 4) refresh สรุปรายโครงการ + ซิงก์งบทะเบียนโครงการให้ตรงกับ ERP (กัน budget_amount ค้างเก่า)
       const { error:rpcErr }=await supabase.rpc("hub_refresh_project_summary");
       if(rpcErr) errors.push("อัปเดตสรุปรายโครงการไม่สำเร็จ: "+rpcErr.message);
+      const { error:syncErr }=await supabase.rpc("hub_sync_project_budgets");
+      if(syncErr) errors.push("ซิงก์งบทะเบียนโครงการไม่สำเร็จ: "+syncErr.message);
 
       const unmatched=recs.filter(x=>!x.project_id).length;
       setResult({ ok, total:recs.length, errors, created, unmatched,
