@@ -21,6 +21,7 @@ export default function RequestDetail(){
   const { id }=useParams();
   const [r,setR]=useState(null); const [exp,setExp]=useState([]); const [expLines,setExpLines]=useState([]); const [log,setLog]=useState([]);
   const [team,setTeam]=useState([]); const [uid,setUid]=useState(null); const [staff,setStaff]=useState(false); const [canManage,setCanManage]=useState(false); const [canAssign,setCanAssign]=useState(false);
+  const [types,setTypes]=useState([]); const [editType,setEditType]=useState(false); const [newType,setNewType]=useState(""); const [typeBusy,setTypeBusy]=useState(false);
   const [assignee,setAssignee]=useState(""); const [msg,setMsg]=useState(null);
   const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
   const [atts,setAtts]=useState([]); const [upBusy,setUpBusy]=useState(false); const [thumbs,setThumbs]=useState({});
@@ -102,8 +103,18 @@ export default function RequestDetail(){
     setRole((t||[]).find(x=>x.profiles?.id===u)?.hub_role || null);
     const { data:s }=await supabase.from("hub_settings").select("value").eq("key","expense_approval_threshold").maybeSingle();
     if(s?.value!=null) setThreshold(Number(s.value)||100000);
+    const { data:tp }=await supabase.from("hub_request_types").select("id,name,category,sort_order").eq("is_active",true).order("category").order("sort_order");
+    setTypes(tp||[]);
     load();
   })(); },[id]);
+  async function saveType(){
+    if(!newType || newType===r.request_type_id){ setEditType(false); return; }
+    setTypeBusy(true);
+    const { error }=await supabase.from("hub_requests").update({request_type_id:newType}).eq("id",id);
+    if(error){ setMsg("แก้ประเภทงานไม่สำเร็จ: "+error.message); setTypeBusy(false); return; }
+    await supabase.from("hub_activity_log").insert({request_id:id,actor_id:uid,action:"เปลี่ยนประเภทงาน",note:(types.find(t=>t.id===newType)?.name)||""});
+    setTypeBusy(false); setEditType(false); setMsg("เปลี่ยนประเภทงานแล้ว"); load();
+  }
   if(!r) return <Shell title="คำขอ"><div className="muted">กำลังโหลด…</div></Shell>;
   // เช็คลิสต์เอกสารตามประเภทงาน
   const slots = Array.isArray(r.hub_request_types?.doc_slots) ? r.hub_request_types.doc_slots : [];
@@ -219,7 +230,20 @@ export default function RequestDetail(){
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
             <div><span className="mono">{r.ticket_no}</span> &nbsp; <StatusBadge s={r.status}/>
               {r.rework_count>0&&<span className="tag" style={{marginLeft:6,background:"#FBF1DE",color:"#9A5B00"}}>ตีกลับ {r.rework_count} ครั้ง</span>}</div>
-            <span className="tag">{r.hub_request_types?.name}</span>
+            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
+              {!editType ? (<>
+                <span className="tag">{r.hub_request_types?.name}</span>
+                {((r.requester_id===uid && r.status==="new")||(canManage&&!["closed","cancelled"].includes(r.status)))&&
+                  <button className="btn sm sec" style={{fontSize:11,padding:"2px 8px"}} title="เลือกหัวข้อผิด? แก้ประเภทงานได้ที่นี่"
+                    onClick={()=>{setNewType(r.request_type_id);setEditType(true);}}>✏️ แก้ประเภท</button>}
+              </>) : (<>
+                <select value={newType} onChange={e=>setNewType(e.target.value)} style={{fontSize:12,maxWidth:250,padding:"4px 6px"}}>
+                  {types.map(t=>(<option key={t.id} value={t.id}>{t.name}</option>))}
+                </select>
+                <button className="btn sm" style={{fontSize:11,padding:"2px 8px"}} disabled={typeBusy} onClick={saveType}>{typeBusy?"…":"บันทึก"}</button>
+                <button className="btn sm sec" style={{fontSize:11,padding:"2px 8px"}} onClick={()=>setEditType(false)}>ยกเลิก</button>
+              </>)}
+            </div>
           </div>
           <h2 style={{fontSize:18}}>{r.title}</h2>
           {r.project&&<div style={{margin:"6px 0"}}><span className="tag" style={{background:"#EEF4FF",borderColor:"#C7D9F7",color:"#2D6CDF"}}>📁 {r.project.code} · {r.project.name}</span></div>}
