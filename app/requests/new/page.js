@@ -119,6 +119,11 @@ export default function NewRequest(){
       setErr("งานประเภทนี้ต้องแนบเอกสารหลักฐานอย่างน้อย 1 ไฟล์");
       window.scrollTo({top:0,behavior:"smooth"}); return;
     }
+    // ⛔ งานที่มีค่าใช้จ่าย ต้องระบุ "โครงการ" หรือ "แผนก" อย่างน้อยหนึ่ง (เบิกเข้าโครงการ/เบิกเข้าแผนก)
+    if(needExpense && !form.project && !form.department){
+      setErr("งานที่มีค่าใช้จ่าย ต้องระบุ ‘โครงการ’ (เบิกเข้าโครงการ) หรือเลือก ‘แผนก’ (เบิกเข้าแผนก) อย่างน้อยหนึ่งอย่าง");
+      window.scrollTo({top:0,behavior:"smooth"}); return;
+    }
     // ⛔ ต้องเลือก Opex/Capex ทุกครั้งที่มีค่าใช้จ่าย
     if(needExpense && amt>0 && !etype){
       setErr("กรุณาเลือกประเภทงบ — Opex (ดำเนินงาน) หรือ Capex (ลงทุน)");
@@ -215,15 +220,17 @@ export default function NewRequest(){
               <option value="low">ต่ำ</option><option value="normal">ปกติ</option><option value="high">สูง</option><option value="urgent">ด่วนมาก</option></select></div>
           <div className="field"><label>กำหนดส่งที่ต้องการ</label><input type="date" value={form.due} onChange={e=>up("due",e.target.value)}/></div>
         </div>
+        {needExpense&&<div style={{fontSize:12.5,color:"#2E7D5B",background:"#EAF6EF",border:"1px solid #B7DEC8",borderRadius:8,padding:"7px 11px",marginBottom:10}}>
+          💡 งานที่มีค่าใช้จ่าย: <b>เบิกเข้าโครงการ</b> → เลือกโครงการ · <b>เบิกเข้าแผนก</b> → เว้นโครงการว่าง แล้วเลือกแผนก (อย่างน้อยหนึ่งอย่าง)
+        </div>}
         <div className="field">
-          <label>โครงการ / รหัสโครงการ {needExpense&&<span style={{color:"#B03A2E"}}>*</span>}</label>
+          <label>โครงการ / รหัสโครงการ <span className="muted" style={{fontWeight:400,fontSize:11}}>(เว้นว่างได้ถ้าเบิกเข้าแผนก)</span></label>
           <Combobox
             options={projects.map(p=>({value:p.id, label:(p.code||"")+" · "+(p.name||""), sub:p.name}))}
             value={form.project} onChange={v=>up("project",v)}
-            required={!!needExpense}
             placeholder="🔎 พิมพ์รหัส/ชื่อโครงการเพื่อค้นหา"
-            emptyLabel="— ไม่ระบุโครงการ —"/>
-          <div className="muted" style={{fontSize:11,marginTop:4}}>พิมพ์รหัสหรือชื่อโครงการเพื่อค้นหา · ระบุโครงการ = ระบบส่งงานให้ <b>เจ้าประจำโครงการ</b> โดยตรง</div>
+            emptyLabel="— ไม่ระบุโครงการ (เบิกเข้าแผนก) —"/>
+          <div className="muted" style={{fontSize:11,marginTop:4}}>ระบุโครงการ = เบิกเข้าโครงการ + ส่งงานให้ <b>เจ้าประจำโครงการ</b> · เว้นว่าง = เบิกเข้าแผนก</div>
         </div>
         <div className="field">
           <label>แผนก (สำหรับจ่ายงาน)</label>
