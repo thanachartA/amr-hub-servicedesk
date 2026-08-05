@@ -255,9 +255,9 @@ export default function NewRequest(){
                 <th className="right" style={{width:130}}>จำนวนเงิน</th><th style={{width:34}}></th>
               </tr></thead><tbody>
               {advLines.map((l,i)=>(<tr key={i}>
-                <td><select value={l.cost} onChange={e=>setLine(i,"cost",e.target.value)} style={{width:"100%"}}>
-                  <option value="">— เลือก —</option>{codes.map(c=>(<option key={c.id} value={c.id}>{c.code} · {c.name}</option>))}
-                </select></td>
+                <td><Combobox options={codes.map(c=>({value:c.id,label:c.code+" · "+c.name,sub:c.name}))}
+                  value={l.cost} onChange={v=>setLine(i,"cost",v)}
+                  placeholder="🔎 cost code" emptyLabel="— เลือก —" searchPlaceholder="🔎 พิมพ์รหัส/ชื่อ cost code"/></td>
                 <td><input value={l.note} onChange={e=>setLine(i,"note",e.target.value)} placeholder="เช่น ค่าเดินทาง..." style={{width:"100%"}}/></td>
                 <td><input type="number" value={l.amount} onChange={e=>setLine(i,"amount",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
                 <td style={{textAlign:"center"}}>{advLines.length>1&&
@@ -274,9 +274,11 @@ export default function NewRequest(){
           </div>
           ) : (
           <div className="row2">
-            <div className="field"><label>Cost Code</label>
-              <select value={form.cost} onChange={e=>up("cost",e.target.value)}>
-                <option value="">— เลือก —</option>{codes.map(c=>(<option key={c.id} value={c.id}>{c.code} · {c.name}</option>))}</select></div>
+            <div className="field"><label>Cost Code (ERP)</label>
+              <Combobox options={codes.map(c=>({value:c.id,label:c.code+" · "+c.name,sub:c.name}))}
+                value={form.cost} onChange={v=>up("cost",v)}
+                placeholder="🔎 พิมพ์รหัส/ชื่อ cost code" emptyLabel="— เลือก —"
+                searchPlaceholder="🔎 พิมพ์รหัส/ชื่อ cost code"/></div>
             <div className="field"><label>จำนวนเงิน (บาท)</label>
               <input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0"
                 style={overBudget?{borderColor:"#B03A2E",boxShadow:"0 0 0 3px rgba(176,58,46,.12)"}:undefined}/>
