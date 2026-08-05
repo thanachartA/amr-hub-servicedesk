@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 
 // ช่องเลือกแบบพิมพ์ค้นหาได้ (สำหรับรายการยาว ๆ เช่นโครงการ 700+ รายการ)
 // options: [{value, label, sub}] · value: ค่าที่เลือก · onChange(value)
-export default function Combobox({ options, value, onChange, placeholder="พิมพ์เพื่อค้นหา…", required, allowEmpty=true, emptyLabel="— ไม่ระบุ —" }){
+export default function Combobox({ options, value, onChange, placeholder="พิมพ์เพื่อค้นหา…", required, allowEmpty=true, emptyLabel="— ไม่ระบุ —", searchPlaceholder="🔎 พิมพ์รหัส / ชื่อ เพื่อค้นหา", noResultText="ไม่พบรายการที่ค้นหา" }){
   const [open,setOpen]=useState(false);
   const [q,setQ]=useState("");
   const [hi,setHi]=useState(0);
@@ -52,11 +52,11 @@ export default function Combobox({ options, value, onChange, placeholder="พิ
             else if(e.key==="Enter"){e.preventDefault();if(filtered[hi])pick(filtered[hi]);}
             else if(e.key==="Escape"){setOpen(false);}
           }}
-          placeholder="🔎 พิมพ์รหัส / ชื่อโครงการ"
+          placeholder={searchPlaceholder}
           style={{width:"100%",padding:"8px 10px",border:"1px solid #E6E8EC",borderRadius:7,fontSize:13,fontFamily:"inherit"}}/>
       </div>
       <div style={{maxHeight:280,overflowY:"auto"}}>
-        {filtered.length===0 && <div style={{padding:"12px 14px",color:"#98A4AE",fontSize:13}}>ไม่พบโครงการที่ค้นหา</div>}
+        {filtered.length===0 && <div style={{padding:"12px 14px",color:"#98A4AE",fontSize:13}}>{noResultText}</div>}
         {filtered.map((o,i)=>(<div key={o.value||"_empty"} onMouseEnter={()=>setHi(i)} onClick={()=>pick(o)}
           style={{padding:"8px 12px",cursor:"pointer",fontSize:13,lineHeight:1.5,
             background:i===hi?"#EEF4FF":(o.value===value?"#F6FBF8":"#fff"),
