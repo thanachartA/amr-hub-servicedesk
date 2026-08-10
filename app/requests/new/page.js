@@ -63,12 +63,12 @@ export default function NewRequest(){
     if(pd){ const hit=(d.data||[]).find(x=>String(x.name).toLowerCase()===pd.toLowerCase()||String(x.code).toLowerCase()===pd.toLowerCase());
       if(hit) setForm(f=>({...f,department:hit.code})); }
   })(); },[]);
-  // โหลดงบคงเหลือเมื่อเลือกโครงการ
+  // โหลดงบคงเหลือ "ราย cost code" เมื่อเลือกโครงการ + cost code (ฐานต้นทุนจัดซื้อ ตรง ERP)
   useEffect(()=>{ (async()=>{
-    if(!form.project){ setBud(null); return; }
-    const { data }=await supabase.rpc("hub_project_budget_left",{ p_project:form.project });
+    if(!form.project || !form.cost){ setBud(null); return; }
+    const { data }=await supabase.rpc("hub_costcode_budget_left",{ p_project:form.project, p_costcode:form.cost });
     setBud(data||null);
-  })(); },[form.project]);
+  })(); },[form.project,form.cost]);
   const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
   // Advance / Clear Advance = 1 OF มีได้หลาย cost → ยอดรวมทั้งใบใช้เช็คงบ/อนุมัติ
   const isAdvance = !!needExpense && /advance/i.test(sel?.name||"");
@@ -294,15 +294,15 @@ export default function NewRequest(){
             </div>
           </div>
           )}
-          {/* งบคงเหลือของโครงการ */}
-          {bud&&form.project&&(bud.has_budget
+          {/* งบคงเหลือราย Cost Code (ฐานต้นทุนจัดซื้อ ตรง ERP) */}
+          {bud&&form.project&&form.cost&&(bud.has_budget
             ? <div style={{marginTop:6,padding:"8px 12px",borderRadius:8,fontSize:12.5,
                 background:overBudget?"#FDECEE":"#EEF6FF",border:"1px solid "+(overBudget?"#F3C9CE":"#C7D9F7")}}>
-                งบโครงการ <b>{fmtMoney(bud.budget)}</b> · ใช้ไปแล้ว <b>{fmtMoney(Math.max(Number(bud.used),Number(bud.erp)))}</b> ·
+                งบ Cost Code นี้ <b>{fmtMoney(bud.budget)}</b> · ใช้ไปแล้ว (จัดซื้อ) <b>{fmtMoney(Math.max(Number(bud.used),Number(bud.erp)))}</b> ·
                 คงเหลือ <b style={{color:Number(bud.left)<=0?"#B03A2E":"#2E7D5B"}}>{fmtMoney(bud.left)}</b>
-                {overBudget&&<div style={{color:"#B03A2E",fontWeight:700,marginTop:3}}>⛔ งบไม่พอ — ส่งคำขอไม่ได้ ต้องลดยอดหรือเปลี่ยนโครงการ</div>}
+                {overBudget&&<div style={{color:"#B03A2E",fontWeight:700,marginTop:3}}>⛔ งบ cost code นี้ไม่พอ — ต้องลดยอด เปลี่ยน cost code หรือผ่าน governance</div>}
               </div>
-            : <div className="muted" style={{fontSize:11.5,marginTop:6}}>โครงการนี้ยังไม่ได้ตั้งงบประมาณ (ไม่เช็คงบ)</div>)}
+            : <div className="muted" style={{fontSize:11.5,marginTop:6}}>Cost code นี้ยังไม่ได้ตั้งงบในโครงการนี้ (ไม่เช็คงบ)</div>)}
           {Number(form.amount)>THRESHOLD&&<div className="muted" style={{color:"#B26A00",marginTop:6}}>⚠ ยอด &gt; {fmtMoney(THRESHOLD)} — ต้องผ่านการอนุมัติ Owner</div>}
 
           {overBudget&&(<div style={{marginTop:12,background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:10,padding:"12px 14px"}}>
