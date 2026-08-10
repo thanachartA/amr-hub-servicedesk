@@ -48,6 +48,7 @@ export default function NewRequest(){
   const [excomFile,setExcomFile]=useState(null);// มติ Excom (Capex)
   const [excomAck,setExcomAck]=useState(false);
   const [advLines,setAdvLines]=useState([{cost:"",amount:"",note:""}]);  // Clear Advance: หลาย cost ใน 1 OF
+  const [ccMap,setCcMap]=useState({});   // งบเหลือราย cost code ของโครงการ (ใช้เช็ค Advance รายบรรทัด)
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
     const [t,p,c,d,me]=await Promise.all([
@@ -69,12 +70,27 @@ export default function NewRequest(){
     const { data }=await supabase.rpc("hub_costcode_budget_left",{ p_project:form.project, p_costcode:form.cost });
     setBud(data||null);
   })(); },[form.project,form.cost]);
+  // โหลดงบเหลือ "ทุก cost code" ในโครงการ → map ไว้เช็ค Advance รายบรรทัด
+  useEffect(()=>{ (async()=>{
+    if(!form.project){ setCcMap({}); return; }
+    const { data }=await supabase.rpc("hub_project_costcode_budgets",{ p_project:form.project });
+    const m={}; (data||[]).forEach(r=>{ m[r.cost_code_id]={remaining:Number(r.remaining),budget:Number(r.budget),has_budget:r.has_budget}; });
+    setCcMap(m);
+  })(); },[form.project]);
   const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
   // Advance / Clear Advance = 1 OF มีได้หลาย cost → ยอดรวมทั้งใบใช้เช็คงบ/อนุมัติ
   const isAdvance = !!needExpense && /advance/i.test(sel?.name||"");
   const advTotal = advLines.reduce((s,l)=>s+(Number(String(l.amount).replace(/[,\s]/g,""))||0),0);
   const amt = isAdvance ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0);
   const overBudget = bud?.has_budget && amt>0 && amt > Number(bud.left);
+  // ── Advance: เช็คงบราย cost code รายบรรทัด (รวมยอดต่อ cost code แล้วเทียบงบเหลือ) ──
+  const advByCost = {};
+  if(isAdvance) advLines.forEach(l=>{ if(l.cost){ const a=Number(String(l.amount).replace(/[,\s]/g,""))||0; advByCost[l.cost]=(advByCost[l.cost]||0)+a; } });
+  const advOverList = isAdvance
+    ? Object.entries(advByCost).filter(([cid,sum])=>{ const cc=ccMap[cid]; return cc && cc.has_budget && sum > cc.remaining; })
+    : [];
+  const advOver = advOverList.length>0;
+  const overCost = new Set(advOverList.map(([cid])=>cid));   // cost code ที่งบไม่พอ (ทำ input แดง)
   // ── ตรวจความพร้อมของ governance เมื่องบไม่พอ ──
   const shortfall = overBudget ? (amt - Number(bud.left)) : 0;
   const tAmtNum = Number(String(tAmt).replace(/[,\s]/g,""))||0;
@@ -92,7 +108,7 @@ export default function NewRequest(){
       else if(!excomAck){ govReady=false; govMsg="ยืนยันว่าได้รับอนุมัติจากที่ประชุม Excom แล้ว"; }
     }
   }
-  const blockSubmit = (needExpense && amt>0 && !etype) || (overBudget && !govReady);
+  const blockSubmit = (needExpense && amt>0 && !etype) || (overBudget && !govReady) || advOver;
   function up(k,v){ setForm(s=>({...s,[k]:v}));
     if(k==="type"){ setDocs({}); setFiles([]); setFd({});
       setEtype(""); setTScope("in_dept"); setTFrom(""); setTAmt(""); setCfo(false); setCeo(false);
@@ -134,6 +150,13 @@ export default function NewRequest(){
       const paid=advLines.filter(l=>(Number(String(l.amount).replace(/[,\s]/g,""))||0)>0);
       if(!paid.length){ setErr("Clear Advance ต้องมีอย่างน้อย 1 รายการที่มีจำนวนเงิน"); window.scrollTo({top:0,behavior:"smooth"}); return; }
       if(paid.some(l=>!l.cost)){ setErr("ทุกบรรทัดที่มีจำนวนเงิน ต้องเลือก Cost Code"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      // ⛔ งบราย cost code ไม่พอ → ไม่ให้ส่ง ต้องเริ่มกระบวนการใหม่ทั้งหมด
+      if(advOver){
+        const detail=advOverList.map(([cid,sum])=>{ const c=codes.find(x=>x.id===cid); const cc=ccMap[cid];
+          return (c?.code||"?")+" (เบิก "+fmtMoney(sum)+" · เหลือ "+fmtMoney(cc.remaining)+")"; }).join(" · ");
+        setErr("งบไม่พอราย Cost Code — ต้องเริ่มกระบวนการใหม่ทั้งหมด: "+detail);
+        window.scrollTo({top:0,behavior:"smooth"}); return;
+      }
     }
     // ⛔ งบไม่พอ → ต้องผ่าน governance (โยกงบ Opex / มติ Excom Capex) ก่อน
     if(overBudget && !govReady){
@@ -261,23 +284,31 @@ export default function NewRequest(){
                 <th style={{width:"34%"}}>Cost Code</th><th>รายละเอียด</th>
                 <th className="right" style={{width:130}}>จำนวนเงิน</th><th style={{width:34}}></th>
               </tr></thead><tbody>
-              {advLines.map((l,i)=>(<tr key={i}>
+              {advLines.map((l,i)=>{ const cc=l.cost?ccMap[l.cost]:null; const isOver=overCost.has(l.cost); return (<tr key={i}>
                 <td><Combobox options={codes.map(c=>({value:c.id,label:c.code+" · "+c.name,sub:c.name}))}
                   value={l.cost} onChange={v=>setLine(i,"cost",v)}
-                  placeholder="🔎 cost code" emptyLabel="— เลือก —" searchPlaceholder="🔎 พิมพ์รหัส/ชื่อ cost code"/></td>
+                  placeholder="🔎 cost code" emptyLabel="— เลือก —" searchPlaceholder="🔎 พิมพ์รหัส/ชื่อ cost code"/>
+                  {cc&&cc.has_budget&&<div style={{fontSize:10.5,marginTop:3,fontWeight:isOver?700:400,color:isOver?"#B03A2E":"#6B7A72"}}>{isOver?"⛔ ":""}งบเหลือ {fmtMoney(cc.remaining)}</div>}</td>
                 <td><input value={l.note} onChange={e=>setLine(i,"note",e.target.value)} placeholder="เช่น ค่าเดินทาง..." style={{width:"100%"}}/></td>
-                <td><input type="number" value={l.amount} onChange={e=>setLine(i,"amount",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
+                <td><input type="number" value={l.amount} onChange={e=>setLine(i,"amount",e.target.value)} placeholder="0"
+                  style={{width:"100%",textAlign:"right",...(isOver?{borderColor:"#B03A2E",boxShadow:"0 0 0 2px rgba(176,58,46,.12)"}:{})}}/></td>
                 <td style={{textAlign:"center"}}>{advLines.length>1&&
                   <button type="button" onClick={()=>rmLine(i)} title="ลบบรรทัด"
                     style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}</td>
-              </tr>))}
+              </tr>); })}
               </tbody>
               <tfoot><tr style={{borderTop:"2px solid #DDE6E0",fontWeight:700,background:"#FAFDFB"}}>
                 <td colSpan="2"><button type="button" onClick={addLine} className="btn sm sec" style={{fontSize:12}}>+ เพิ่มบรรทัด</button></td>
-                <td className="right" style={{color:overBudget?"#B03A2E":"#2E7D5B"}}>รวม {fmtMoney(advTotal)}</td><td></td>
+                <td className="right" style={{color:advOver?"#B03A2E":"#2E7D5B"}}>รวม {fmtMoney(advTotal)}</td><td></td>
               </tr></tfoot></table>
             </div>
-            {overBudget&&<div style={{fontSize:11.5,color:"#B03A2E",fontWeight:700,marginTop:4}}>🚫 ยอดรวมเกินงบคงเหลือ {fmtMoney(amt-Number(bud.left))}</div>}
+            {advOver&&<div style={{marginTop:6,background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:8,padding:"9px 12px"}}>
+              <div style={{fontSize:12,color:"#B03A2E",fontWeight:800}}>⛔ งบไม่พอราย Cost Code — แก้ไขให้อยู่ในงบ ไม่งั้นต้องเริ่มกระบวนการใหม่ทั้งหมด</div>
+              <ul style={{margin:"5px 0 0",paddingLeft:18,fontSize:11.5,color:"#7A3B34",lineHeight:1.7}}>
+                {advOverList.map(([cid,sum])=>{ const c=codes.find(x=>x.id===cid); const cc=ccMap[cid];
+                  return <li key={cid}><b>{c?.code}</b> — เบิก {fmtMoney(sum)} · งบเหลือ {fmtMoney(cc.remaining)} <b style={{color:"#B03A2E"}}>(เกิน {fmtMoney(sum-cc.remaining)})</b></li>; })}
+              </ul>
+            </div>}
           </div>
           ) : (
           <div className="row2">
@@ -382,7 +413,7 @@ export default function NewRequest(){
           รูป / PDF / Word / Excel · สูงสุด 10MB ต่อไฟล์
         </div>
         <button className="btn" disabled={busy||blockSubmit}>{busy?"กำลังส่ง…":
-          blockSubmit?(overBudget?"⛔ ทำเงื่อนไขงบไม่พอให้ครบก่อน":"⛔ เลือกประเภทงบก่อน"):"ส่งคำขอ"}</button>
+          blockSubmit?(advOver?"⛔ งบ cost code ไม่พอ — แก้ไขก่อน":overBudget?"⛔ ทำเงื่อนไขงบไม่พอให้ครบก่อน":"⛔ เลือกประเภทงบก่อน"):"ส่งคำขอ"}</button>
       </form>
     </div>
   </Shell>);
