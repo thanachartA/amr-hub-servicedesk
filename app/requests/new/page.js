@@ -80,13 +80,15 @@ export default function NewRequest(){
   const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
   // Advance / Clear Advance = 1 OF มีได้หลาย cost → ยอดรวมทั้งใบใช้เช็คงบ/อนุมัติ
   const isAdvance = !!needExpense && /advance/i.test(sel?.name||"");
+  // งานที่ "ตั้งเบิกตาม commit เดิม" (เช่น Billing วางบิลตาม WO ที่ตัดงบแล้ว) → ไม่เช็ค/ไม่ตัดงบซ้ำ
+  const skipBudget = !!sel?.skip_budget_check;
   const advTotal = advLines.reduce((s,l)=>s+(Number(String(l.amount).replace(/[,\s]/g,""))||0),0);
   const amt = isAdvance ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0);
-  const overBudget = bud?.has_budget && amt>0 && amt > Number(bud.left);
+  const overBudget = !skipBudget && bud?.has_budget && amt>0 && amt > Number(bud.left);
   // ── Advance: เช็คงบราย cost code รายบรรทัด (รวมยอดต่อ cost code แล้วเทียบงบเหลือ) ──
   const advByCost = {};
-  if(isAdvance) advLines.forEach(l=>{ if(l.cost){ const a=Number(String(l.amount).replace(/[,\s]/g,""))||0; advByCost[l.cost]=(advByCost[l.cost]||0)+a; } });
-  const advOverList = isAdvance
+  if(isAdvance && !skipBudget) advLines.forEach(l=>{ if(l.cost){ const a=Number(String(l.amount).replace(/[,\s]/g,""))||0; advByCost[l.cost]=(advByCost[l.cost]||0)+a; } });
+  const advOverList = (isAdvance && !skipBudget)
     ? Object.entries(advByCost).filter(([cid,sum])=>{ const cc=ccMap[cid]; return cc && cc.has_budget && sum > cc.remaining; })
     : [];
   const advOver = advOverList.length>0;
@@ -266,6 +268,9 @@ export default function NewRequest(){
 
         {needExpense&&(<div style={{background:"#E4F3EA",border:"1px solid #B7DEC8",borderRadius:10,padding:14,marginBottom:14}}>
           <div style={{fontWeight:700,color:"#2E7D5B",marginBottom:10}}>ค่าใช้จ่ายโครงการ</div>
+          {skipBudget&&<div style={{fontSize:12,color:"#2453A8",background:"#EEF4FF",border:"1px solid #C7D9F7",borderRadius:8,padding:"8px 11px",marginBottom:10}}>
+            ℹ️ งานนี้เป็นการ<b>ตั้งเบิกตามที่ผูกงบไว้แล้ว</b> (เช่น วางบิลตาม WO) ระบบจะ<b>ไม่เช็ค/ไม่ตัดงบซ้ำ</b> เพราะงบถูกกันไว้ตั้งแต่ขั้นเปิด PR/PO/WO แล้ว
+          </div>}
           <div className="field"><label>ประเภทงบ * <span className="muted" style={{fontWeight:400,fontSize:11}}>(เลือกก่อนกรอกจำนวนเงิน)</span></label>
             <div style={{display:"flex",gap:8}}>
               {[["opex","Opex — ดำเนินงาน"],["capex","Capex — ลงทุน"]].map(([v,l])=>(
