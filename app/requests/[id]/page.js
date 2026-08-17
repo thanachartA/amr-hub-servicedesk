@@ -29,6 +29,7 @@ export default function RequestDetail(){
   // อนุมัติค่าใช้จ่าย 2 ชั้น
   const [role,setRole]=useState(null); const [threshold,setThreshold]=useState(100000);
   const [apvBusy,setApvBusy]=useState(null); const [expErr,setExpErr]=useState(null);
+  const [sigs,setSigs]=useState([]); const [sigBusy,setSigBusy]=useState(false);   // e-signature ผู้ตรวจ/อนุมัติ
   // แก้ไขคำขอ (ผู้ขอ ตอน new)
   const [editing,setEditing]=useState(false); const [editDraft,setEditDraft]=useState({detail:"",form_data:{},priority:"normal"});
   const names=Object.fromEntries(team.filter(x=>x.profiles).map(x=>[x.profiles.id, x.profiles.full_name]));
@@ -93,6 +94,8 @@ export default function RequestDetail(){
     const { data:at }=await supabase.from("hub_attachments").select("*,uploader:uploaded_by(full_name)").eq("request_id",id).order("created_at",{ascending:true});
     setAtts(at||[]);
     setThumbs(await signedUrls((at||[]).filter(a=>isImage(a.mime_type)).map(a=>a.file_path), 900));
+    const { data:sg }=await supabase.from("hub_signatures").select("*").eq("request_id",id);
+    setSigs(sg||[]);
   },[id]);
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); const u=sess.session.user.id; setUid(u);
@@ -219,8 +222,48 @@ export default function RequestDetail(){
     await supabase.from("hub_requests").update({csat_rating:cs,csat_comment:cc||null,csat_at:new Date().toISOString()}).eq("id",id);
     setMsg("ขอบคุณสำหรับการประเมิน"); load();
   }
+  // ── e-signature (ผู้ตรวจสอบ / ผู้อนุมัติ) ──
+  function pickImageDataUrl(){
+    return new Promise(res=>{
+      const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*";
+      inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f){res(null);return;} const rd=new FileReader(); rd.onload=()=>res(rd.result); rd.onerror=()=>res(null); rd.readAsDataURL(f); };
+      inp.click();
+    });
+  }
+  async function sign(kind){
+    const meName = names[uid] || (team.find(x=>x.profiles?.id===uid)?.profiles?.full_name) || "";
+    const nm = prompt("พิมพ์ชื่อผู้ลงนาม ("+(kind==="review"?"ผู้ตรวจสอบ":"ผู้อนุมัติ")+"):", meName);
+    if(nm===null || !nm.trim()) return;
+    let image=null;
+    if(confirm("แนบรูปลายเซ็นด้วยไหม?\n\nOK = เลือกไฟล์รูปลายเซ็น · Cancel = ใช้ชื่อพิมพ์อย่างเดียว")){
+      image = await pickImageDataUrl();
+    }
+    setSigBusy(true);
+    const { error }=await supabase.from("hub_signatures").insert({request_id:id,kind,user_id:uid,signer_name:nm.trim(),signer_role:role,image_data:image});
+    setSigBusy(false);
+    if(error){ setMsg("ลงนามไม่สำเร็จ: "+error.message); return; }
+    setMsg("ลงนามเรียบร้อย"); load();
+  }
+  function printTravelPDF(){
+    const fd=r.form_data||{}; const list=Array.isArray(fd.trips)?fd.trips:[];
+    const sR=sigs.find(s=>s.kind==="review"), sA=sigs.find(s=>s.kind==="approve");
+    const odo=atts.filter(a=>String(a.slot_key||"").startsWith("odo_"));
+    const totKm=list.reduce((s,t)=>s+(Number(t.km)||0),0);
+    const totAmt=list.reduce((s,t)=>s+(Number(t.amount)||0),0);
+    const esc=(s)=>String(s==null?"":s).replace(/[&<>]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
+    const rows=list.map(t=>`<tr><td style="text-align:center">${t.no}</td><td>${esc(t.date)}</td><td>${esc(t.dest)}</td><td style="text-align:right">${t.odo_out==null?"":t.odo_out}</td><td style="text-align:right">${t.odo_in==null?"":t.odo_in}</td><td style="text-align:right">${t.km==null?"":t.km}</td><td style="text-align:right">${t.maps_km==null?"":t.maps_km}</td><td style="text-align:center">${t.over?"⚠ ตรวจสอบ":"✓ ปกติ"}</td><td style="text-align:right">${fmtMoney(t.amount)}</td></tr>`+((t.over&&t.reason)?`<tr><td></td><td colspan="8" style="color:#b03a2e;font-size:11px">เหตุผล/จุดแวะ: ${esc(t.reason)}</td></tr>`:"")).join("");
+    const sigBlock=(title,s,fbName,fbTime)=>`<div style="flex:1;text-align:center;padding:0 8px"><div style="height:54px;display:flex;align-items:flex-end;justify-content:center">${(s&&s.image_data)?`<img src="${s.image_data}" style="max-height:52px;max-width:150px"/>`:""}</div><div style="border-top:1px solid #333;margin-top:2px;padding-top:3px;font-size:12px">${esc(s?s.signer_name:(fbName||"................"))}</div><div style="font-size:11px;color:#555">${title}</div><div style="font-size:10px;color:#777">${s?("ลงนามอิเล็กทรอนิกส์ "+new Date(s.created_at).toLocaleString("th-TH")):(fbTime||"วันที่ ......../......../.......")}</div></div>`;
+    const photos=odo.map(a=>{ const u=thumbs[a.file_path]; return u?`<img src="${u}" style="width:150px;height:110px;object-fit:cover;border:1px solid #ccc;margin:3px"/>`:""; }).join("");
+    const html=`<!doctype html><html><head><meta charset="utf-8"><title>ค่าเดินทาง ${esc(r.ticket_no)}</title><style>*{font-family:'TH Sarabun New','Sarabun',Tahoma,sans-serif;box-sizing:border-box}body{margin:0;padding:24px;color:#111;font-size:13px}h1{font-size:18px;margin:0 0 2px}table{width:100%;border-collapse:collapse;margin:6px 0}th,td{border:1px solid #999;padding:4px 6px;font-size:12px}th{background:#eef}.sec{font-weight:700;background:#f0f0f0;padding:4px 8px;margin:10px 0 4px;border-left:4px solid #2E5A88}.kv{display:flex;flex-wrap:wrap;gap:2px 24px}.kv div{min-width:220px;padding:2px 0}@media print{button{display:none}}</style></head><body><button onclick="window.print()" style="float:right;padding:6px 12px">🖨 พิมพ์ / บันทึก PDF</button><h1>แบบฟอร์มขอเบิกค่าเดินทาง — รถยนต์ส่วนตัว</h1><div style="font-size:11px;color:#555">บริษัท เอเอ็มอาร์ เอเชีย จำกัด (มหาชน) · Private Vehicle Travel Reimbursement · เลขที่ ${esc(r.ticket_no)}</div><div class="sec">ส่วนที่ 1 — ข้อมูลผู้เดินทาง</div><div class="kv"><div><b>ชื่อผู้เดินทาง:</b> ${esc(r.requester&&r.requester.full_name)}</div><div><b>รหัสพนักงาน:</b> ${esc(fd.emp_code)}</div><div><b>แผนก/โครงการ:</b> ${esc(r.project?(r.project.code+" · "+r.project.name):(r.department_code||""))}</div><div><b>ทะเบียนรถ:</b> ${esc(fd.plate)}</div><div><b>Cost Code:</b> ${esc(exp[0]&&exp[0].hub_cost_codes?(exp[0].hub_cost_codes.code+" · "+exp[0].hub_cost_codes.name):"")}</div><div><b>อัตรา:</b> ${fd.rate||7} บาท/กม.</div></div><div class="sec">ส่วนที่ 2 — รายละเอียดการเดินทาง</div><table><thead><tr><th>ครั้ง</th><th>วันที่</th><th>ปลายทาง/วัตถุประสงค์</th><th>ไมล์ไป</th><th>ไมล์กลับ</th><th>กม.</th><th>Maps</th><th>ตรวจ</th><th>เงิน</th></tr></thead><tbody>${rows}<tr style="font-weight:700"><td colspan="5" style="text-align:right">รวมทั้งสิ้น</td><td style="text-align:right">${totKm}</td><td></td><td></td><td style="text-align:right">${fmtMoney(totAmt)}</td></tr></tbody></table><div class="sec">ส่วนที่ 3 — คำรับรองของผู้เดินทาง</div><div style="font-size:11.5px">ข้าพเจ้าขอรับรองว่าได้เดินทางไปปฏิบัติงานตามรายการข้างต้นจริง · ภาพเลขไมล์ที่แนบเป็นภาพถ่ายจริง ไม่ใช้ภาพซ้ำ · ระยะทางที่เบิกเพื่อปฏิบัติงานเท่านั้น · ไม่มีการเบิกซ้ำซ้อนกับค่าน้ำมัน/Fleet Card ทริปเดียวกัน</div><div class="sec">ส่วนที่ 4 — สายการอนุมัติ</div><div style="display:flex;margin-top:16px">${sigBlock("พนักงาน (ผู้ขอเบิก)",null,r.requester&&r.requester.full_name,"ยื่นในระบบ "+new Date(r.created_at).toLocaleDateString("th-TH"))}${sigBlock("หัวหน้างาน / PM (ผู้ตรวจสอบ)",sR)}${sigBlock("ผู้อนุมัติ (CPO)",sA)}</div>${photos?`<div class="sec">ภาพถ่ายเลขไมล์</div><div>${photos}</div>`:""}</body></html>`;
+    const w=window.open("","_blank"); if(!w){ setMsg("เบราว์เซอร์บล็อกป๊อปอัป — อนุญาตป๊อปอัปแล้วลองใหม่"); return; }
+    w.document.write(html); w.document.close();
+  }
   const now=new Date();
   const active=["assigned","in_progress","waiting","revising"].includes(r.status);
+  const trips = Array.isArray(r.form_data?.trips) ? r.form_data.trips : null;
+  const sigReview = sigs.find(s=>s.kind==="review");
+  const sigApprove = sigs.find(s=>s.kind==="approve");
+  const odoPhotos = atts.filter(a=>String(a.slot_key||"").startsWith("odo_"));
   const canRate = r.status==="closed" && uid===r.requester_id;
   return (<Shell title={"คำขอ "+(r.ticket_no||"")}>
     {msg&&<div className="ok">{msg}</div>}
@@ -286,6 +329,69 @@ export default function RequestDetail(){
                 </div>
               </div>)}
         </div>
+
+        {trips&&(<div className="card">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <h2 style={{margin:0}}>🚗 รายละเอียดค่าเดินทาง</h2>
+            <button className="btn sm sec" onClick={printTravelPDF}>🖨 Export PDF</button>
+          </div>
+          <div className="muted" style={{fontSize:12,marginBottom:8}}>
+            รหัสพนักงาน: <b>{r.form_data?.emp_code||"—"}</b> · ทะเบียนรถ: <b>{r.form_data?.plate||"—"}</b> · อัตรา {r.form_data?.rate||7} บาท/กม.
+          </div>
+          <div style={{overflowX:"auto"}}>
+          <table style={{fontSize:12}}><thead><tr>
+            <th>#</th><th>วันที่</th><th>ปลายทาง</th><th className="right">ไมล์ไป</th><th className="right">ไมล์กลับ</th><th className="right">กม.</th><th className="right">Maps</th><th>ตรวจ</th><th className="right">เงิน</th>
+          </tr></thead><tbody>
+          {trips.map(t=>(<Fragment key={t.no}>
+            <tr>
+              <td style={{textAlign:"center"}}>{t.no}</td><td>{t.date}</td><td>{t.dest}</td>
+              <td className="right">{t.odo_out}</td><td className="right">{t.odo_in}</td>
+              <td className="right"><b>{t.km}</b></td><td className="right">{t.maps_km}</td>
+              <td style={{color:t.over?"#B03A2E":"#2E7D5B",fontSize:11,fontWeight:700}}>{t.over?"⚠ ตรวจสอบ":"✓ ปกติ"}</td>
+              <td className="right">{fmtMoney(t.amount)}</td>
+            </tr>
+            {t.over&&t.reason&&<tr><td></td><td colSpan="8" style={{fontSize:11,color:"#B03A2E"}}>เหตุผล/จุดแวะ: {t.reason}</td></tr>}
+          </Fragment>))}
+          <tr style={{fontWeight:700,borderTop:"2px solid #DDE6E0",background:"#FAFDFB"}}>
+            <td colSpan="5" className="right">รวมทั้งสิ้น</td><td className="right">{r.form_data?.total_km}</td><td></td><td></td>
+            <td className="right">{fmtMoney(trips.reduce((s,t)=>s+(Number(t.amount)||0),0))}</td>
+          </tr>
+          </tbody></table>
+          </div>
+          {odoPhotos.length>0&&<div style={{marginTop:8}}>
+            <div className="muted" style={{fontSize:12,marginBottom:4}}>รูปเลขไมล์ ({odoPhotos.length})</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {odoPhotos.map(a=>{ const th=thumbs[a.file_path]; return th
+                ? <img key={a.id} src={th} alt={a.file_name} onClick={()=>openAttachment(a.file_path)} style={{width:90,height:70,objectFit:"cover",borderRadius:6,border:"1px solid #DDE3E8",cursor:"pointer"}}/>
+                : <div key={a.id} className="muted" style={{fontSize:11}}>{fileIcon(a.mime_type)} {a.file_name}</div>; })}
+            </div>
+          </div>}
+        </div>)}
+
+        {trips&&(<div className="card">
+          <h2>✍️ ลายเซ็นอนุมัติ (สำหรับบัญชีทำจ่าย)</h2>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,fontSize:12.5}}>
+            <div style={{textAlign:"center",border:"1px solid #E4E7EB",borderRadius:8,padding:10}}>
+              <div style={{height:44}}></div>
+              <div style={{fontWeight:700,borderTop:"1px solid #ccc",paddingTop:4}}>{r.requester?.full_name||"—"}</div>
+              <div className="muted" style={{fontSize:11}}>พนักงาน (ผู้ขอเบิก)</div>
+              <div className="muted" style={{fontSize:10}}>ยื่นในระบบ {fmtDate(r.created_at)}</div>
+            </div>
+            {[["review","หัวหน้างาน / PM (ผู้ตรวจสอบ)",sigReview,canAssign],["approve","ผู้อนุมัติ (CPO)",sigApprove,role==="owner"]].map(([kind,label,s,canSign])=>(
+              <div key={kind} style={{textAlign:"center",border:"1px solid "+(s?"#B7DEC8":"#E4E7EB"),borderRadius:8,padding:10,background:s?"#F6FBF8":"#fff"}}>
+                <div style={{height:44,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {s?.image_data?<img src={s.image_data} alt="ลายเซ็น" style={{maxHeight:42,maxWidth:120}}/>:(s?<span style={{color:"#2E7D5B",fontSize:20}}>✓</span>:null)}
+                </div>
+                <div style={{fontWeight:700,borderTop:"1px solid #ccc",paddingTop:4}}>{s?s.signer_name:"— ยังไม่ลงนาม —"}</div>
+                <div className="muted" style={{fontSize:11}}>{label}</div>
+                {s?<div className="muted" style={{fontSize:10}}>ลงนาม {fmtDate(s.created_at)}</div>
+                  :canSign?<button className="btn sm" style={{marginTop:6,fontSize:11}} disabled={sigBusy} onClick={()=>sign(kind)}>✍️ ลงนาม</button>
+                  :<div className="muted" style={{fontSize:10,marginTop:4}}>รอผู้มีสิทธิ์ลงนาม</div>}
+              </div>
+            ))}
+          </div>
+          <div className="muted" style={{fontSize:11,marginTop:8}}>💡 ลงนามครบแล้วกด <b>Export PDF</b> ด้านบน เพื่อออกเอกสารให้บัญชีทำจ่าย</div>
+        </div>)}
 
         {slots.length>0&&(<div className="card">
           <h2>📎 เช็คลิสต์เอกสาร ({slots.filter(s=>s.required&&bySlot[s.key]?.length).length}/{slots.filter(s=>s.required).length})</h2>
