@@ -253,7 +253,8 @@ export default function RequestDetail(){
     const esc=(s)=>String(s==null?"":s).replace(/[&<>]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
     const rows=list.map(t=>`<tr><td style="text-align:center">${t.no}</td><td>${esc(t.date)}</td><td>${esc(t.dest)}</td><td style="text-align:right">${t.odo_out==null?"":t.odo_out}</td><td style="text-align:right">${t.odo_in==null?"":t.odo_in}</td><td style="text-align:right">${t.km==null?"":t.km}</td><td style="text-align:right">${t.maps_km==null?"":t.maps_km}</td><td style="text-align:center">${t.over?"⚠ ตรวจสอบ":"✓ ปกติ"}</td><td style="text-align:right">${fmtMoney(t.amount)}</td></tr>`+((t.over&&t.reason)?`<tr><td></td><td colspan="8" style="color:#b03a2e;font-size:11px">เหตุผล/จุดแวะ: ${esc(t.reason)}</td></tr>`:"")).join("");
     const sigBlock=(title,s,fbName,fbTime)=>`<div style="flex:1;text-align:center;padding:0 8px"><div style="height:54px;display:flex;align-items:flex-end;justify-content:center">${(s&&s.image_data)?`<img src="${s.image_data}" style="max-height:52px;max-width:150px"/>`:""}</div><div style="border-top:1px solid #333;margin-top:2px;padding-top:3px;font-size:12px">${esc(s?s.signer_name:(fbName||"................"))}</div><div style="font-size:11px;color:#555">${title}</div><div style="font-size:10px;color:#777">${s?("ลงนามอิเล็กทรอนิกส์ "+new Date(s.created_at).toLocaleString("th-TH")):(fbTime||"วันที่ ......../......../.......")}</div></div>`;
-    const photos=odo.map(a=>{ const u=thumbs[a.file_path]; return u?`<img src="${u}" style="width:150px;height:110px;object-fit:cover;border:1px solid #ccc;margin:3px"/>`:""; }).join("");
+    const olab=(k)=>{ const m=/^odo_(\d+)_(out|in)$/.exec(k||""); return m?("เที่ยว "+m[1]+" "+(m[2]==="out"?"ขาไป":"ขากลับ")):"เลขไมล์"; };
+    const photos=odo.map(a=>{ const u=thumbs[a.file_path]; return u?`<div style="display:inline-block;text-align:center;margin:3px;vertical-align:top"><img src="${u}" style="width:150px;height:110px;object-fit:cover;border:1px solid #ccc"/><div style="font-size:10px">${olab(a.slot_key)}</div></div>`:""; }).join("");
     const html=`<!doctype html><html><head><meta charset="utf-8"><title>ค่าเดินทาง ${esc(r.ticket_no)}</title><style>*{font-family:'TH Sarabun New','Sarabun',Tahoma,sans-serif;box-sizing:border-box}body{margin:0;padding:24px;color:#111;font-size:13px}h1{font-size:18px;margin:0 0 2px}table{width:100%;border-collapse:collapse;margin:6px 0}th,td{border:1px solid #999;padding:4px 6px;font-size:12px}th{background:#eef}.sec{font-weight:700;background:#f0f0f0;padding:4px 8px;margin:10px 0 4px;border-left:4px solid #2E5A88}.kv{display:flex;flex-wrap:wrap;gap:2px 24px}.kv div{min-width:220px;padding:2px 0}@media print{button{display:none}}</style></head><body><button onclick="window.print()" style="float:right;padding:6px 12px">🖨 พิมพ์ / บันทึก PDF</button><h1>แบบฟอร์มขอเบิกค่าเดินทาง — รถยนต์ส่วนตัว</h1><div style="font-size:11px;color:#555">บริษัท เอเอ็มอาร์ เอเชีย จำกัด (มหาชน) · Private Vehicle Travel Reimbursement · เลขที่ ${esc(r.ticket_no)}</div><div class="sec">ส่วนที่ 1 — ข้อมูลผู้เดินทาง</div><div class="kv"><div><b>ชื่อผู้เดินทาง:</b> ${esc(r.requester&&r.requester.full_name)}</div><div><b>รหัสพนักงาน:</b> ${esc(fd.emp_code)}</div><div><b>แผนก/โครงการ:</b> ${esc(r.project?(r.project.code+" · "+r.project.name):(r.department_code||""))}</div><div><b>ทะเบียนรถ:</b> ${esc(fd.plate)}</div><div><b>Cost Code:</b> ${esc(exp[0]&&exp[0].hub_cost_codes?(exp[0].hub_cost_codes.code+" · "+exp[0].hub_cost_codes.name):"")}</div><div><b>อัตรา:</b> ${fd.rate||7} บาท/กม.</div></div><div class="sec">ส่วนที่ 2 — รายละเอียดการเดินทาง</div><table><thead><tr><th>ครั้ง</th><th>วันที่</th><th>ปลายทาง/วัตถุประสงค์</th><th>ไมล์ไป</th><th>ไมล์กลับ</th><th>กม.</th><th>Maps</th><th>ตรวจ</th><th>เงิน</th></tr></thead><tbody>${rows}<tr style="font-weight:700"><td colspan="5" style="text-align:right">รวมทั้งสิ้น</td><td style="text-align:right">${totKm}</td><td></td><td></td><td style="text-align:right">${fmtMoney(totAmt)}</td></tr></tbody></table><div class="sec">ส่วนที่ 3 — คำรับรองของผู้เดินทาง</div><div style="font-size:11.5px">ข้าพเจ้าขอรับรองว่าได้เดินทางไปปฏิบัติงานตามรายการข้างต้นจริง · ภาพเลขไมล์ที่แนบเป็นภาพถ่ายจริง ไม่ใช้ภาพซ้ำ · ระยะทางที่เบิกเพื่อปฏิบัติงานเท่านั้น · ไม่มีการเบิกซ้ำซ้อนกับค่าน้ำมัน/Fleet Card ทริปเดียวกัน</div><div class="sec">ส่วนที่ 4 — สายการอนุมัติ</div><div style="display:flex;margin-top:16px">${sigBlock("พนักงาน (ผู้ขอเบิก)",null,r.requester&&r.requester.full_name,"ยื่นในระบบ "+new Date(r.created_at).toLocaleDateString("th-TH"))}${sigBlock("หัวหน้างาน / PM (ผู้ตรวจสอบ)",sR)}${sigBlock("ผู้อนุมัติ (CPO)",sA)}</div>${photos?`<div class="sec">ภาพถ่ายเลขไมล์</div><div>${photos}</div>`:""}</body></html>`;
     const w=window.open("","_blank"); if(!w){ setMsg("เบราว์เซอร์บล็อกป๊อปอัป — อนุญาตป๊อปอัปแล้วลองใหม่"); return; }
     w.document.write(html); w.document.close();
@@ -264,6 +265,7 @@ export default function RequestDetail(){
   const sigReview = sigs.find(s=>s.kind==="review");
   const sigApprove = sigs.find(s=>s.kind==="approve");
   const odoPhotos = atts.filter(a=>String(a.slot_key||"").startsWith("odo_"));
+  const odoLabel=(k)=>{ const m=/^odo_(\d+)_(out|in)$/.exec(k||""); return m?("เที่ยว "+m[1]+" · "+(m[2]==="out"?"ขาไป":"ขากลับ")):"เลขไมล์"; };
   const canRate = r.status==="closed" && uid===r.requester_id;
   return (<Shell title={"คำขอ "+(r.ticket_no||"")}>
     {msg&&<div className="ok">{msg}</div>}
@@ -360,10 +362,13 @@ export default function RequestDetail(){
           </div>
           {odoPhotos.length>0&&<div style={{marginTop:8}}>
             <div className="muted" style={{fontSize:12,marginBottom:4}}>รูปเลขไมล์ ({odoPhotos.length})</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-              {odoPhotos.map(a=>{ const th=thumbs[a.file_path]; return th
-                ? <img key={a.id} src={th} alt={a.file_name} onClick={()=>openAttachment(a.file_path)} style={{width:90,height:70,objectFit:"cover",borderRadius:6,border:"1px solid #DDE3E8",cursor:"pointer"}}/>
-                : <div key={a.id} className="muted" style={{fontSize:11}}>{fileIcon(a.mime_type)} {a.file_name}</div>; })}
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {odoPhotos.map(a=>{ const th=thumbs[a.file_path]; return (<div key={a.id} style={{textAlign:"center"}}>
+                {th
+                  ? <img src={th} alt={a.file_name} onClick={()=>openAttachment(a.file_path)} style={{width:96,height:72,objectFit:"cover",borderRadius:6,border:"1px solid #DDE3E8",cursor:"pointer",display:"block"}}/>
+                  : <div className="muted" style={{fontSize:11}}>{fileIcon(a.mime_type)} {a.file_name}</div>}
+                <div style={{fontSize:10.5,fontWeight:700,color:String(a.slot_key||"").endsWith("_out")?"#2453A8":"#8A5A00",marginTop:2}}>{odoLabel(a.slot_key)}</div>
+              </div>); })}
             </div>
           </div>}
         </div>)}
@@ -451,7 +456,7 @@ export default function RequestDetail(){
                   : <div style={{width:52,height:52,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,borderRadius:6,border:"1px solid #DDE3E8",background:"#fff",flexShrink:0}}>{isLink(a)?"🔗":fileIcon(a.mime_type)}</div>}
                 <div style={{fontSize:13,minWidth:0}}>
                   {a.slot_key&&<div><span className="tag" style={{fontSize:10,background:"#EEF4FF",color:"#2D6CDF",borderColor:"#C7D9F7"}}>
-                    {slotLabel[a.slot_key]||a.slot_key}</span></div>}
+                    {slotLabel[a.slot_key]||(String(a.slot_key).startsWith("odo_")?("รูปเลขไมล์ "+odoLabel(a.slot_key)):a.slot_key)}</span></div>}
                   <b style={{wordBreak:"break-all"}}>{a.file_name}</b>
                   <div className="muted" style={{fontSize:11,marginTop:2}}>{isLink(a)?"🔗 ลิงก์ภายนอก":fmtSize(a.size_bytes)} · {a.uploader?.full_name||"—"} · {fmtDate(a.created_at)}</div>
                 </div>
