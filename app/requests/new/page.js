@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
@@ -49,6 +49,7 @@ export default function NewRequest(){
   const [excomAck,setExcomAck]=useState(false);
   const [advLines,setAdvLines]=useState([{cost:"",amount:"",note:""}]);  // Clear Advance: หลาย cost ใน 1 OF
   const [ccMap,setCcMap]=useState({});   // งบเหลือราย cost code ของโครงการ (ใช้เช็ค Advance รายบรรทัด)
+  const [trips,setTrips]=useState([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photo:null}]);  // ค่าเดินทางหลายเที่ยว
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
     const [t,p,c,d,me]=await Promise.all([
@@ -82,8 +83,15 @@ export default function NewRequest(){
   const isAdvance = !!needExpense && /advance/i.test(sel?.name||"");
   // งานที่ "ตั้งเบิกตาม commit เดิม" (เช่น Billing วางบิลตาม WO ที่ตัดงบแล้ว) → ไม่เช็ค/ไม่ตัดงบซ้ำ
   const skipBudget = !!sel?.skip_budget_check;
+  // ── ค่าเดินทางรถส่วนตัว: กม. = ไมล์กลับ−ไป · เงิน = กม.×7 · recheck vs Google Maps (ส่วนต่าง>10 = ⚠) ──
+  const isTravel = !!sel?.is_travel; const RATE_KM=7; const MAPS_TOL=10;
+  const tripKm=(t)=>{ const a=Number(t.odoOut),b=Number(t.odoIn); return (isFinite(a)&&isFinite(b)&&b>a)?(b-a):0; };
+  const tripDiff=(t)=>{ const m=Number(t.mapsKm); return (isFinite(m)&&m>0&&tripKm(t)>0)?(tripKm(t)-m):null; };
+  const tripOver=(t)=>{ const d=tripDiff(t); return d!==null && d>MAPS_TOL; };
+  const travelKm = trips.reduce((s,t)=>s+tripKm(t),0);
+  const travelTotal = travelKm*RATE_KM;
   const advTotal = advLines.reduce((s,l)=>s+(Number(String(l.amount).replace(/[,\s]/g,""))||0),0);
-  const amt = isAdvance ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0);
+  const amt = isTravel ? travelTotal : (isAdvance ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0));
   const overBudget = !skipBudget && bud?.has_budget && amt>0 && amt > Number(bud.left);
   // ── Advance: เช็คงบราย cost code รายบรรทัด (รวมยอดต่อ cost code แล้วเทียบงบเหลือ) ──
   const advByCost = {};
@@ -116,12 +124,17 @@ export default function NewRequest(){
       setEtype(""); setTScope("in_dept"); setTFrom(""); setTAmt(""); setCfo(false); setCeo(false);
       setMemoFile(null); setExcomFile(null); setExcomAck(false);
       setAdvLines([{cost:"",amount:"",note:""}]);
+      setTrips([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photo:null}]);
       setLinks([]); setLU(""); setLL(""); }
   }
   // ── หลาย cost line (Clear Advance) ──
   const setLine=(i,k,v)=>setAdvLines(a=>a.map((l,idx)=>idx===i?{...l,[k]:v}:l));
   const addLine=()=>setAdvLines(a=>[...a,{cost:"",amount:"",note:""}]);
   const rmLine=(i)=>setAdvLines(a=>a.length>1?a.filter((_,idx)=>idx!==i):a);
+  // ── ค่าเดินทาง: จัดการเที่ยว ──
+  const setTrip=(i,k,v)=>setTrips(a=>a.map((t,idx)=>idx===i?{...t,[k]:v}:t));
+  const addTrip=()=>setTrips(a=>a.length<8?[...a,{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photo:null}]:a);
+  const rmTrip=(i)=>setTrips(a=>a.length>1?a.filter((_,idx)=>idx!==i):a);
   async function submit(e){ e.preventDefault(); setErr(null);
     // ⛔ บังคับกรอกให้ครบก่อนส่ง
     const miss=missingFields(sel?.form_schema, fd);
@@ -160,6 +173,21 @@ export default function NewRequest(){
         window.scrollTo({top:0,behavior:"smooth"}); return;
       }
     }
+    // ⛔ ค่าเดินทาง: ตรวจแต่ละเที่ยวให้ครบ + เกิน Maps ต้องมีเหตุผล + แนบรูปเลขไมล์ทุกเที่ยว
+    if(isTravel){
+      const active=trips.filter(t=>t.date||t.dest||t.odoOut||t.odoIn||t.mapsKm||t.photo);
+      if(!active.length){ setErr("ต้องมีรายการเดินทางอย่างน้อย 1 เที่ยว"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      for(let i=0;i<trips.length;i++){ const t=trips[i]; const n=i+1;
+        const filled=t.date||t.dest||t.odoOut||t.odoIn||t.mapsKm||t.photo;
+        if(!filled) continue;
+        if(!t.date||!t.dest){ setErr("เที่ยวที่ "+n+": ต้องกรอกวันที่และปลายทาง/วัตถุประสงค์"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+        if(tripKm(t)<=0){ setErr("เที่ยวที่ "+n+": เลขไมล์กลับต้องมากกว่าเลขไมล์ไป"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+        if(!(Number(t.mapsKm)>0)){ setErr("เที่ยวที่ "+n+": กรอกระยะจาก Google Maps"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+        if(!t.photo){ setErr("เที่ยวที่ "+n+": ต้องแนบรูปถ่ายเลขไมล์"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+        if(tripOver(t) && !String(t.reason||"").trim()){ setErr("เที่ยวที่ "+n+": ระยะสูงกว่า Google Maps เกิน "+MAPS_TOL+" กม. — ต้องระบุเหตุผล/จุดแวะ"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      }
+      if(travelKm<=0){ setErr("ต้องมีเที่ยวที่ระยะทาง > 0 อย่างน้อย 1 เที่ยว"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+    }
     // ⛔ งบไม่พอ → ต้องผ่าน governance (โยกงบ Opex / มติ Excom Capex) ก่อน
     if(overBudget && !govReady){
       setErr("งบโครงการไม่พอ (ขาด "+fmtMoney(shortfall)+" บาท) — "+govMsg);
@@ -171,7 +199,11 @@ export default function NewRequest(){
     const { data:req, error }=await supabase.from("hub_requests").insert({
       requester_id:uid, request_type_id:form.type, title:form.title, detail:form.detail,
       priority:form.priority, requested_due:form.due||null, sla_due_at:sla, status:"new",
-      project_id: form.project||null, department_code: form.department||null, form_data: fd
+      project_id: form.project||null, department_code: form.department||null,
+      form_data: isTravel ? {...fd, rate:RATE_KM, total_km:travelKm,
+        trips: trips.filter(t=>tripKm(t)>0).map((t,i)=>({no:i+1,date:t.date,vtype:t.vtype,dest:t.dest,
+          odo_out:Number(t.odoOut),odo_in:Number(t.odoIn),km:tripKm(t),maps_km:Number(t.mapsKm),
+          diff:tripDiff(t),over:tripOver(t),reason:t.reason||"",amount:tripKm(t)*RATE_KM})) } : fd
     }).select().single();
     if(error){ setErr(error.message); setBusy(false); return; }
     if(needExpense && amt>0){
@@ -204,6 +236,7 @@ export default function NewRequest(){
     const items=[];
     Object.entries(docs).forEach(([k,arr])=>arr.forEach(f=>items.push({file:f, slot_key:k})));
     files.forEach(f=>items.push({file:f, slot_key:null}));
+    if(isTravel) trips.forEach((t,i)=>{ if(t.photo && tripKm(t)>0) items.push({file:t.photo, slot_key:"odo_"+(i+1)}); });
     if(overBudget && etype==="opex" && memoFile) items.push({file:memoFile, slot_key:"budget_memo"});
     if(overBudget && etype==="capex" && excomFile) items.push({file:excomFile, slot_key:"excom_approval"});
     if(items.length){
@@ -281,7 +314,50 @@ export default function NewRequest(){
                 </label>))}
             </div>
           </div>
-          {isAdvance ? (
+          {isTravel ? (
+          <>
+            <div className="field"><label>Cost Code (ERP)</label>
+              <Combobox options={codes.map(c=>({value:c.id,label:c.code+" · "+c.name,sub:c.name}))}
+                value={form.cost} onChange={v=>up("cost",v)}
+                placeholder="🔎 พิมพ์รหัส/ชื่อ cost code" emptyLabel="— เลือก —" searchPlaceholder="🔎 พิมพ์รหัส/ชื่อ cost code"/></div>
+            <div className="field">
+              <label>รายละเอียดการเดินทาง (สูงสุด 8 เที่ยว) · อัตรา {RATE_KM} บาท/กม. *</label>
+              <div style={{overflowX:"auto",border:"1px solid #CFE3D6",borderRadius:8}}>
+              <table style={{margin:0,fontSize:11.5,minWidth:860}}><thead><tr style={{background:"#F0F7F2"}}>
+                <th style={{width:26}}>#</th><th style={{width:120}}>วันที่</th><th>ปลายทาง/วัตถุประสงค์</th>
+                <th style={{width:78}}>ไมล์ไป</th><th style={{width:78}}>ไมล์กลับ</th><th style={{width:52}}>กม.</th>
+                <th style={{width:82}}>Maps(กม.)</th><th style={{width:96}}>สถานะ</th><th className="right" style={{width:80}}>เงิน</th><th style={{width:78}}>รูปไมล์</th><th style={{width:26}}></th>
+              </tr></thead><tbody>
+              {trips.map((t,i)=>{ const km=tripKm(t); const d=tripDiff(t); const over=tripOver(t); return (<Fragment key={i}>
+                <tr>
+                  <td style={{textAlign:"center"}}>{i+1}</td>
+                  <td><input type="date" value={t.date} onChange={e=>setTrip(i,"date",e.target.value)} style={{width:"100%"}}/></td>
+                  <td><input value={t.dest} onChange={e=>setTrip(i,"dest",e.target.value)} placeholder="เช่น ไซต์งาน / ลูกค้า" style={{width:"100%"}}/></td>
+                  <td><input type="number" value={t.odoOut} onChange={e=>setTrip(i,"odoOut",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
+                  <td><input type="number" value={t.odoIn} onChange={e=>setTrip(i,"odoIn",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
+                  <td style={{textAlign:"right",fontWeight:700}}>{km||"-"}</td>
+                  <td><input type="number" value={t.mapsKm} onChange={e=>setTrip(i,"mapsKm",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
+                  <td style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:over?"#B03A2E":(d!==null?"#2E7D5B":"#98A4AE")}}>{d===null?"รอ Maps":over?("⚠ เกิน "+d):"✓ ปกติ"}</td>
+                  <td style={{textAlign:"right"}}>{km?fmtMoney(km*RATE_KM):"-"}</td>
+                  <td style={{textAlign:"center"}}><label className="btn sm sec" style={{cursor:"pointer",fontSize:10.5,padding:"3px 6px",display:"inline-block"}} title={t.photo?t.photo.name:"แนบรูปเลขไมล์"}>
+                    {t.photo?"✓":"📎"}<input type="file" accept="image/*" style={{display:"none"}} onChange={e=>setTrip(i,"photo",e.target.files?.[0]||null)}/></label></td>
+                  <td style={{textAlign:"center"}}>{trips.length>1&&<button type="button" onClick={()=>rmTrip(i)} style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}</td>
+                </tr>
+                {over&&<tr><td></td><td colSpan="10" style={{paddingBottom:6}}>
+                  <input value={t.reason} onChange={e=>setTrip(i,"reason",e.target.value)} placeholder="⚠ ระยะเกิน Maps — ระบุเหตุผล/จุดแวะ (บังคับ)"
+                    style={{width:"100%",borderColor:"#B03A2E",fontSize:11}}/></td></tr>}
+              </Fragment>); })}
+              </tbody>
+              <tfoot><tr style={{borderTop:"2px solid #DDE6E0",fontWeight:700,background:"#FAFDFB"}}>
+                <td colSpan="5"><button type="button" onClick={addTrip} className="btn sm sec" style={{fontSize:12}} disabled={trips.length>=8}>+ เพิ่มเที่ยว</button></td>
+                <td style={{textAlign:"right"}}>{travelKm||"-"}</td><td></td><td></td><td className="right" style={{color:"#2E7D5B"}}>{fmtMoney(travelTotal)}</td><td colSpan="2"></td>
+              </tr></tfoot></table>
+              </div>
+              {trips.some(tripOver)&&<div style={{fontSize:11.5,color:"#B03A2E",fontWeight:700,marginTop:5}}>⚠ มีเที่ยวที่ระยะสูงกว่า Google Maps เกิน {MAPS_TOL} กม. — ต้องระบุเหตุผล/จุดแวะในแถวสีแดง</div>}
+              <div className="muted" style={{fontSize:11,marginTop:4}}>ระยะ = ไมล์กลับ − ไมล์ไป · เงิน = ระยะ × {RATE_KM} บาท · แนบรูปเลขไมล์ทุกเที่ยว (บังคับ)</div>
+            </div>
+          </>
+          ) : isAdvance ? (
           <div className="field">
             <label>รายการค่าใช้จ่าย (Clear Advance — ใส่ได้หลาย Cost) *</label>
             <div style={{border:"1px solid #CFE3D6",borderRadius:8,overflow:"hidden"}}>
@@ -339,7 +415,7 @@ export default function NewRequest(){
                 {overBudget&&<div style={{color:"#B03A2E",fontWeight:700,marginTop:3}}>⛔ งบ cost code นี้ไม่พอ — ต้องลดยอด เปลี่ยน cost code หรือผ่าน governance</div>}
               </div>
             : <div className="muted" style={{fontSize:11.5,marginTop:6}}>Cost code นี้ยังไม่ได้ตั้งงบในโครงการนี้ (ไม่เช็คงบ)</div>)}
-          {Number(form.amount)>THRESHOLD&&<div className="muted" style={{color:"#B26A00",marginTop:6}}>⚠ ยอด &gt; {fmtMoney(THRESHOLD)} — ต้องผ่านการอนุมัติ Owner</div>}
+          {amt>THRESHOLD&&<div className="muted" style={{color:"#B26A00",marginTop:6}}>⚠ ยอด &gt; {fmtMoney(THRESHOLD)} — ต้องผ่านการอนุมัติ Owner</div>}
 
           {overBudget&&(<div style={{marginTop:12,background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:10,padding:"12px 14px"}}>
             <div style={{fontWeight:800,color:"#B03A2E",marginBottom:6}}>⛔ งบไม่พอ — ขาด {fmtMoney(shortfall)} บาท</div>
