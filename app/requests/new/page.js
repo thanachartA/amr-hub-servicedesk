@@ -49,7 +49,7 @@ export default function NewRequest(){
   const [excomAck,setExcomAck]=useState(false);
   const [advLines,setAdvLines]=useState([{cost:"",amount:"",note:""}]);  // Clear Advance: หลาย cost ใน 1 OF
   const [ccMap,setCcMap]=useState({});   // งบเหลือราย cost code ของโครงการ (ใช้เช็ค Advance รายบรรทัด)
-  const [trips,setTrips]=useState([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photo:null}]);  // ค่าเดินทางหลายเที่ยว
+  const [trips,setTrips]=useState([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);  // ค่าเดินทางหลายเที่ยว
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
     const [t,p,c,d,me]=await Promise.all([
@@ -124,7 +124,7 @@ export default function NewRequest(){
       setEtype(""); setTScope("in_dept"); setTFrom(""); setTAmt(""); setCfo(false); setCeo(false);
       setMemoFile(null); setExcomFile(null); setExcomAck(false);
       setAdvLines([{cost:"",amount:"",note:""}]);
-      setTrips([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photo:null}]);
+      setTrips([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);
       setLinks([]); setLU(""); setLL(""); }
   }
   // ── หลาย cost line (Clear Advance) ──
@@ -133,7 +133,7 @@ export default function NewRequest(){
   const rmLine=(i)=>setAdvLines(a=>a.length>1?a.filter((_,idx)=>idx!==i):a);
   // ── ค่าเดินทาง: จัดการเที่ยว ──
   const setTrip=(i,k,v)=>setTrips(a=>a.map((t,idx)=>idx===i?{...t,[k]:v}:t));
-  const addTrip=()=>setTrips(a=>a.length<8?[...a,{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photo:null}]:a);
+  const addTrip=()=>setTrips(a=>a.length<8?[...a,{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]:a);
   const rmTrip=(i)=>setTrips(a=>a.length>1?a.filter((_,idx)=>idx!==i):a);
   async function submit(e){ e.preventDefault(); setErr(null);
     // ⛔ บังคับกรอกให้ครบก่อนส่ง
@@ -175,15 +175,15 @@ export default function NewRequest(){
     }
     // ⛔ ค่าเดินทาง: ตรวจแต่ละเที่ยวให้ครบ + เกิน Maps ต้องมีเหตุผล + แนบรูปเลขไมล์ทุกเที่ยว
     if(isTravel){
-      const active=trips.filter(t=>t.date||t.dest||t.odoOut||t.odoIn||t.mapsKm||t.photo);
+      const active=trips.filter(t=>t.date||t.dest||t.odoOut||t.odoIn||t.mapsKm||t.photoOut||t.photoIn);
       if(!active.length){ setErr("ต้องมีรายการเดินทางอย่างน้อย 1 เที่ยว"); window.scrollTo({top:0,behavior:"smooth"}); return; }
       for(let i=0;i<trips.length;i++){ const t=trips[i]; const n=i+1;
-        const filled=t.date||t.dest||t.odoOut||t.odoIn||t.mapsKm||t.photo;
+        const filled=t.date||t.dest||t.odoOut||t.odoIn||t.mapsKm||t.photoOut||t.photoIn;
         if(!filled) continue;
         if(!t.date||!t.dest){ setErr("เที่ยวที่ "+n+": ต้องกรอกวันที่และปลายทาง/วัตถุประสงค์"); window.scrollTo({top:0,behavior:"smooth"}); return; }
         if(tripKm(t)<=0){ setErr("เที่ยวที่ "+n+": เลขไมล์กลับต้องมากกว่าเลขไมล์ไป"); window.scrollTo({top:0,behavior:"smooth"}); return; }
         if(!(Number(t.mapsKm)>0)){ setErr("เที่ยวที่ "+n+": กรอกระยะจาก Google Maps"); window.scrollTo({top:0,behavior:"smooth"}); return; }
-        if(!t.photo){ setErr("เที่ยวที่ "+n+": ต้องแนบรูปถ่ายเลขไมล์"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+        if(!t.photoOut||!t.photoIn){ setErr("เที่ยวที่ "+n+": ต้องแนบรูปเลขไมล์ทั้ง ‘ขาไป’ และ ‘ขากลับ’"); window.scrollTo({top:0,behavior:"smooth"}); return; }
         if(tripOver(t) && !String(t.reason||"").trim()){ setErr("เที่ยวที่ "+n+": ระยะสูงกว่า Google Maps เกิน "+MAPS_TOL+" กม. — ต้องระบุเหตุผล/จุดแวะ"); window.scrollTo({top:0,behavior:"smooth"}); return; }
       }
       if(travelKm<=0){ setErr("ต้องมีเที่ยวที่ระยะทาง > 0 อย่างน้อย 1 เที่ยว"); window.scrollTo({top:0,behavior:"smooth"}); return; }
@@ -236,7 +236,9 @@ export default function NewRequest(){
     const items=[];
     Object.entries(docs).forEach(([k,arr])=>arr.forEach(f=>items.push({file:f, slot_key:k})));
     files.forEach(f=>items.push({file:f, slot_key:null}));
-    if(isTravel) trips.forEach((t,i)=>{ if(t.photo && tripKm(t)>0) items.push({file:t.photo, slot_key:"odo_"+(i+1)}); });
+    if(isTravel) trips.forEach((t,i)=>{ if(tripKm(t)>0){
+      if(t.photoOut) items.push({file:t.photoOut, slot_key:"odo_"+(i+1)+"_out"});
+      if(t.photoIn)  items.push({file:t.photoIn,  slot_key:"odo_"+(i+1)+"_in"}); } });
     if(overBudget && etype==="opex" && memoFile) items.push({file:memoFile, slot_key:"budget_memo"});
     if(overBudget && etype==="capex" && excomFile) items.push({file:excomFile, slot_key:"excom_approval"});
     if(items.length){
@@ -323,10 +325,10 @@ export default function NewRequest(){
             <div className="field">
               <label>รายละเอียดการเดินทาง (สูงสุด 8 เที่ยว) · อัตรา {RATE_KM} บาท/กม. *</label>
               <div style={{overflowX:"auto",border:"1px solid #CFE3D6",borderRadius:8}}>
-              <table style={{margin:0,fontSize:11.5,minWidth:860}}><thead><tr style={{background:"#F0F7F2"}}>
+              <table style={{margin:0,fontSize:11.5,minWidth:940}}><thead><tr style={{background:"#F0F7F2"}}>
                 <th style={{width:26}}>#</th><th style={{width:120}}>วันที่</th><th>ปลายทาง/วัตถุประสงค์</th>
                 <th style={{width:78}}>ไมล์ไป</th><th style={{width:78}}>ไมล์กลับ</th><th style={{width:52}}>กม.</th>
-                <th style={{width:82}}>Maps(กม.)</th><th style={{width:96}}>สถานะ</th><th className="right" style={{width:80}}>เงิน</th><th style={{width:78}}>รูปไมล์</th><th style={{width:26}}></th>
+                <th style={{width:82}}>Maps(กม.)</th><th style={{width:96}}>สถานะ</th><th className="right" style={{width:80}}>เงิน</th><th style={{width:120}}>รูปไมล์ (ไป/กลับ)</th><th style={{width:26}}></th>
               </tr></thead><tbody>
               {trips.map((t,i)=>{ const km=tripKm(t); const d=tripDiff(t); const over=tripOver(t); return (<Fragment key={i}>
                 <tr>
@@ -339,8 +341,12 @@ export default function NewRequest(){
                   <td><input type="number" value={t.mapsKm} onChange={e=>setTrip(i,"mapsKm",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
                   <td style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:over?"#B03A2E":(d!==null?"#2E7D5B":"#98A4AE")}}>{d===null?"รอ Maps":over?("⚠ เกิน "+d):"✓ ปกติ"}</td>
                   <td style={{textAlign:"right"}}>{km?fmtMoney(km*RATE_KM):"-"}</td>
-                  <td style={{textAlign:"center"}}><label className="btn sm sec" style={{cursor:"pointer",fontSize:10.5,padding:"3px 6px",display:"inline-block"}} title={t.photo?t.photo.name:"แนบรูปเลขไมล์"}>
-                    {t.photo?"✓":"📎"}<input type="file" accept="image/*" style={{display:"none"}} onChange={e=>setTrip(i,"photo",e.target.files?.[0]||null)}/></label></td>
+                  <td style={{textAlign:"center",whiteSpace:"nowrap"}}>
+                    <label className="btn sm sec" style={{cursor:"pointer",fontSize:10,padding:"2px 5px",display:"inline-block",marginRight:3,borderColor:t.photoOut?"#B7DEC8":undefined,color:t.photoOut?"#2E7D5B":undefined}} title={t.photoOut?("ขาไป: "+t.photoOut.name):"รูปเลขไมล์ ขาไป (ก่อนออก)"}>
+                      {t.photoOut?"✓ไป":"📎ไป"}<input type="file" accept="image/*" style={{display:"none"}} onChange={e=>setTrip(i,"photoOut",e.target.files?.[0]||null)}/></label>
+                    <label className="btn sm sec" style={{cursor:"pointer",fontSize:10,padding:"2px 5px",display:"inline-block",borderColor:t.photoIn?"#B7DEC8":undefined,color:t.photoIn?"#2E7D5B":undefined}} title={t.photoIn?("ขากลับ: "+t.photoIn.name):"รูปเลขไมล์ ขากลับ (เมื่อถึง)"}>
+                      {t.photoIn?"✓กลับ":"📎กลับ"}<input type="file" accept="image/*" style={{display:"none"}} onChange={e=>setTrip(i,"photoIn",e.target.files?.[0]||null)}/></label>
+                  </td>
                   <td style={{textAlign:"center"}}>{trips.length>1&&<button type="button" onClick={()=>rmTrip(i)} style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}</td>
                 </tr>
                 {over&&<tr><td></td><td colSpan="10" style={{paddingBottom:6}}>
@@ -354,7 +360,7 @@ export default function NewRequest(){
               </tr></tfoot></table>
               </div>
               {trips.some(tripOver)&&<div style={{fontSize:11.5,color:"#B03A2E",fontWeight:700,marginTop:5}}>⚠ มีเที่ยวที่ระยะสูงกว่า Google Maps เกิน {MAPS_TOL} กม. — ต้องระบุเหตุผล/จุดแวะในแถวสีแดง</div>}
-              <div className="muted" style={{fontSize:11,marginTop:4}}>ระยะ = ไมล์กลับ − ไมล์ไป · เงิน = ระยะ × {RATE_KM} บาท · แนบรูปเลขไมล์ทุกเที่ยว (บังคับ)</div>
+              <div className="muted" style={{fontSize:11,marginTop:4}}>ระยะ = ไมล์กลับ − ไมล์ไป · เงิน = ระยะ × {RATE_KM} บาท · <b>ต้องแนบรูปเลขไมล์ 2 รูปทุกเที่ยว: ขาไป (ก่อนออก) + ขากลับ (เมื่อถึง)</b></div>
             </div>
           </>
           ) : isAdvance ? (
