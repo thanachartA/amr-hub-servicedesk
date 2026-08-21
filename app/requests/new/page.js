@@ -138,14 +138,15 @@ export default function NewRequest(){
   const addTrip=()=>setTrips(a=>a.length<8?[...a,{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]:a);
   const rmTrip=(i)=>setTrips(a=>a.length>1?a.filter((_,idx)=>idx!==i):a);
   // ── ถอดข้อมูลจากบิลด้วย AI (Gemini) แล้วให้ผู้ใช้/แอดมินตรวจสอบ ──
-  const pickImg=()=>new Promise(r=>{ const i=document.createElement("input"); i.type="file"; i.accept="image/*"; i.onchange=()=>r(i.files&&i.files[0]||null); i.click(); });
+  const pickImg=()=>new Promise(r=>{ const i=document.createElement("input"); i.type="file"; i.accept="image/*,application/pdf,.pdf"; i.onchange=()=>r(i.files&&i.files[0]||null); i.click(); });
   const toDataUrl=(f)=>new Promise((res,rej)=>{ const rd=new FileReader(); rd.onload=()=>res(rd.result); rd.onerror=rej; rd.readAsDataURL(f); });
   async function extractBill(){
     const f=await pickImg(); if(!f) return;
     setOcrBusy(true); setErr(null);
     try{
       const b64=await toDataUrl(f);
-      const res=await fetch("/api/extract-bill",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,mime:f.type})});
+      const mime = f.type || (/\.pdf$/i.test(f.name)?"application/pdf":"image/jpeg");
+      const res=await fetch("/api/extract-bill",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,mime})});
       const j=await res.json();
       if(!res.ok||j.error){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(j.error||res.status)); setOcrBusy(false); return; }
       const d=j.data||{};
@@ -435,7 +436,7 @@ export default function NewRequest(){
           {needExpense&&!isTravel&&!isAdvance&&(<div style={{marginTop:8}}>
             <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBill}
               style={{borderColor:"#2453A8",color:"#2453A8"}}>
-              {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดข้อมูลจากบิล (AI)"}
+              {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดข้อมูลจากบิล (รูป/PDF)"}
             </button>
             {ocr&&<div style={{marginTop:6,background:"#FFFBEB",border:"1px solid #EBD9AE",borderRadius:8,padding:"8px 11px",fontSize:12}}>
               <div style={{fontWeight:700,color:"#8A5A00",marginBottom:3}}>🟡 ข้อมูลจากบิล — โปรดตรวจสอบก่อนส่ง{ocr.confidence!=null&&<span style={{fontWeight:400}}> (ความมั่นใจ {Math.round(Number(ocr.confidence)*100)}%)</span>}</div>
