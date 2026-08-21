@@ -50,6 +50,7 @@ export default function NewRequest(){
   const [advLines,setAdvLines]=useState([{cost:"",amount:"",note:""}]);  // Clear Advance: หลาย cost ใน 1 OF
   const [ccMap,setCcMap]=useState({});   // งบเหลือราย cost code ของโครงการ (ใช้เช็ค Advance รายบรรทัด)
   const [trips,setTrips]=useState([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);  // ค่าเดินทางหลายเที่ยว
+  const [ocr,setOcr]=useState(null); const [ocrBusy,setOcrBusy]=useState(false);   // ถอดข้อมูลจากบิล (AI)
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
     const [t,p,c,d,me]=await Promise.all([
@@ -125,6 +126,7 @@ export default function NewRequest(){
       setMemoFile(null); setExcomFile(null); setExcomAck(false);
       setAdvLines([{cost:"",amount:"",note:""}]);
       setTrips([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);
+      setOcr(null);
       setLinks([]); setLU(""); setLL(""); }
   }
   // ── หลาย cost line (Clear Advance) ──
@@ -135,6 +137,24 @@ export default function NewRequest(){
   const setTrip=(i,k,v)=>setTrips(a=>a.map((t,idx)=>idx===i?{...t,[k]:v}:t));
   const addTrip=()=>setTrips(a=>a.length<8?[...a,{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]:a);
   const rmTrip=(i)=>setTrips(a=>a.length>1?a.filter((_,idx)=>idx!==i):a);
+  // ── ถอดข้อมูลจากบิลด้วย AI (Gemini) แล้วให้ผู้ใช้/แอดมินตรวจสอบ ──
+  const pickImg=()=>new Promise(r=>{ const i=document.createElement("input"); i.type="file"; i.accept="image/*"; i.onchange=()=>r(i.files&&i.files[0]||null); i.click(); });
+  const toDataUrl=(f)=>new Promise((res,rej)=>{ const rd=new FileReader(); rd.onload=()=>res(rd.result); rd.onerror=rej; rd.readAsDataURL(f); });
+  async function extractBill(){
+    const f=await pickImg(); if(!f) return;
+    setOcrBusy(true); setErr(null);
+    try{
+      const b64=await toDataUrl(f);
+      const res=await fetch("/api/extract-bill",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,mime:f.type})});
+      const j=await res.json();
+      if(!res.ok||j.error){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(j.error||res.status)); setOcrBusy(false); return; }
+      const d=j.data||{};
+      setOcr({...d, model:j.model});
+      if(Number(d.total)>0) up("amount", String(d.total));
+      setFiles(v=>[...v, f]);   // เก็บบิลเป็นไฟล์แนบหลักฐานอัตโนมัติ
+    }catch(e){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(e?.message||e)); }
+    setOcrBusy(false);
+  }
   async function submit(e){ e.preventDefault(); setErr(null);
     // ⛔ บังคับกรอกให้ครบก่อนส่ง
     const miss=missingFields(sel?.form_schema, fd);
@@ -203,7 +223,7 @@ export default function NewRequest(){
       form_data: isTravel ? {...fd, rate:RATE_KM, total_km:travelKm,
         trips: trips.filter(t=>tripKm(t)>0).map((t,i)=>({no:i+1,date:t.date,vtype:t.vtype,dest:t.dest,
           odo_out:Number(t.odoOut),odo_in:Number(t.odoIn),km:tripKm(t),maps_km:Number(t.mapsKm),
-          diff:tripDiff(t),over:tripOver(t),reason:t.reason||"",amount:tripKm(t)*RATE_KM})) } : fd
+          diff:tripDiff(t),over:tripOver(t),reason:t.reason||"",amount:tripKm(t)*RATE_KM})) } : (ocr ? {...fd, _ocr:{...ocr, confirmed_total:amt, at:new Date().toISOString()}} : fd)
     }).select().single();
     if(error){ setErr(error.message); setBusy(false); return; }
     if(needExpense && amt>0){
@@ -412,6 +432,21 @@ export default function NewRequest(){
             </div>
           </div>
           )}
+          {needExpense&&!isTravel&&!isAdvance&&(<div style={{marginTop:8}}>
+            <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBill}
+              style={{borderColor:"#2453A8",color:"#2453A8"}}>
+              {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดข้อมูลจากบิล (AI)"}
+            </button>
+            {ocr&&<div style={{marginTop:6,background:"#FFFBEB",border:"1px solid #EBD9AE",borderRadius:8,padding:"8px 11px",fontSize:12}}>
+              <div style={{fontWeight:700,color:"#8A5A00",marginBottom:3}}>🟡 ข้อมูลจากบิล — โปรดตรวจสอบก่อนส่ง{ocr.confidence!=null&&<span style={{fontWeight:400}}> (ความมั่นใจ {Math.round(Number(ocr.confidence)*100)}%)</span>}</div>
+              <div style={{color:"#5A4A20",lineHeight:1.7}}>
+                ร้าน: <b>{ocr.vendor||"—"}</b> · วันที่: <b>{ocr.date||"—"}</b> · เลขที่: <b>{ocr.doc_no||"—"}</b><br/>
+                ยอดรวม: <b>{ocr.total!=null?fmtMoney(ocr.total):"—"}</b> · VAT: {ocr.vat!=null?fmtMoney(ocr.vat):"—"} · เลขภาษี: {ocr.tax_id||"—"}
+                {ocr.description?<><br/>รายการ: {ocr.description}</>:null}
+              </div>
+              <div className="muted" style={{fontSize:10.5,marginTop:3}}>ระบบเติมช่อง "จำนวนเงิน" + แนบรูปบิลให้อัตโนมัติแล้ว · แก้ไขได้ถ้าอ่านไม่ตรง</div>
+            </div>}
+          </div>)}
           {/* งบคงเหลือราย Cost Code (ฐานต้นทุนจัดซื้อ ตรง ERP) */}
           {bud&&form.project&&form.cost&&(bud.has_budget
             ? <div style={{marginTop:6,padding:"8px 12px",borderRadius:8,fontSize:12.5,
