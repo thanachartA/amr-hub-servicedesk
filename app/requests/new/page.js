@@ -140,6 +140,25 @@ export default function NewRequest(){
   // ── ถอดข้อมูลจากบิลด้วย AI (Gemini) แล้วให้ผู้ใช้/แอดมินตรวจสอบ ──
   const pickImg=()=>new Promise(r=>{ const i=document.createElement("input"); i.type="file"; i.accept="image/*,application/pdf,.pdf"; i.onchange=()=>r(i.files&&i.files[0]||null); i.click(); });
   const toDataUrl=(f)=>new Promise((res,rej)=>{ const rd=new FileReader(); rd.onload=()=>res(rd.result); rd.onerror=rej; rd.readAsDataURL(f); });
+  // แม็พข้อมูลจากบิล → ช่องในฟอร์ม (ตาม label/ประเภทช่อง) เติมเฉพาะช่องที่ยังว่าง
+  function ocrToFd(d, schema, prev){
+    const out={...(prev||{})};
+    (schema||[]).forEach(f=>{
+      const lab=((f.label||"")+" "+(f.key||""));
+      const cur=out[f.key]; const empty=(cur==null||cur==="");
+      if(f.type==="checkbox"){
+        if(d.vat!=null && Number(d.vat)>0 && /ใบกำกับภาษี|vat/i.test(lab) && !out[f.key]) out[f.key]=true;
+        return;
+      }
+      if(!empty || f.type==="select") return;
+      if(d.doc_no && (f.type==="text"||!f.type) && /เลขที่/.test(lab) && /บิล|ใบเสร็จ|invoice|กำกับ|เอกสาร/i.test(lab)) out[f.key]=String(d.doc_no);
+      else if(d.vendor && f.type!=="number" && /ร้าน|ผู้รับเงิน|บริษัท|ผู้ขาย|ผู้จำหน่าย|vendor/i.test(lab) && !/ประเภท|ที่อยู่|address/i.test(lab)) out[f.key]=String(d.vendor);
+      else if(d.description && (f.type==="textarea"||f.type==="text"||!f.type) && /รายละเอียด|รายการ|วัตถุประสงค์|detail|desc/i.test(lab)) out[f.key]=String(d.description);
+      else if(d.total!=null && f.type==="number" && /จำนวนเงิน|ยอด|รวม|amount/i.test(lab)) out[f.key]=Number(d.total);
+      else if(d.date && f.type==="date" && /วันที่/.test(lab) && !/รับเงิน|due|กำหนด|ครบ/i.test(lab)) out[f.key]=String(d.date);
+    });
+    return out;
+  }
   async function extractBill(){
     const f=await pickImg(); if(!f) return;
     setOcrBusy(true); setErr(null);
@@ -152,6 +171,7 @@ export default function NewRequest(){
       const d=j.data||{};
       setOcr({...d, model:j.model});
       if(Number(d.total)>0) up("amount", String(d.total));
+      setFd(prev=>ocrToFd(d, sel?.form_schema, prev));   // เติมช่องในฟอร์มให้ด้วย (เฉพาะที่ว่าง)
       setFiles(v=>[...v, f]);   // เก็บบิลเป็นไฟล์แนบหลักฐานอัตโนมัติ
     }catch(e){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(e?.message||e)); }
     setOcrBusy(false);
