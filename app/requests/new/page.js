@@ -159,20 +159,51 @@ export default function NewRequest(){
     });
     return out;
   }
+  async function ocrOne(f){
+    const b64=await toDataUrl(f);
+    const mime=f.type||(/\.pdf$/i.test(f.name)?"application/pdf":"image/jpeg");
+    const res=await fetch("/api/extract-bill",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,mime})});
+    const j=await res.json();
+    if(!res.ok||j.error) throw new Error(j.error||("HTTP "+res.status));
+    return { data:j.data||{}, model:j.model };
+  }
+  const pickImgs=()=>new Promise(r=>{ const i=document.createElement("input"); i.type="file"; i.accept="image/*,application/pdf,.pdf"; i.multiple=true; i.onchange=()=>r(i.files?[...i.files]:[]); i.click(); });
+  // ยอดเดี่ยว (OF/Billing/จัดซื้อ)
   async function extractBill(){
     const f=await pickImg(); if(!f) return;
     setOcrBusy(true); setErr(null);
     try{
-      const b64=await toDataUrl(f);
-      const mime = f.type || (/\.pdf$/i.test(f.name)?"application/pdf":"image/jpeg");
-      const res=await fetch("/api/extract-bill",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,mime})});
-      const j=await res.json();
-      if(!res.ok||j.error){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(j.error||res.status)); setOcrBusy(false); return; }
-      const d=j.data||{};
-      setOcr({...d, model:j.model});
+      const { data:d, model }=await ocrOne(f);
+      setOcr({...d, model});
       if(Number(d.total)>0) up("amount", String(d.total));
       setFd(prev=>ocrToFd(d, sel?.form_schema, prev));   // เติมช่องในฟอร์มให้ด้วย (เฉพาะที่ว่าง)
-      setFiles(v=>[...v, f]);   // เก็บบิลเป็นไฟล์แนบหลักฐานอัตโนมัติ
+      setFiles(v=>[...v, f]);   // แนบบิลเป็นหลักฐานอัตโนมัติ
+    }catch(e){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(e?.message||e)); }
+    setOcrBusy(false);
+  }
+  // Clear Advance: เลือกหลายบิล → เพิ่มบรรทัดอัตโนมัติ 1 บิล/บรรทัด (cost code เลือกเอง)
+  async function extractBillsAdvance(){
+    const fs=await pickImgs(); if(!fs.length) return;
+    setOcrBusy(true); setErr(null);
+    const newLines=[]; const addF=[]; let fail=0;
+    for(const f of fs){
+      try{ const { data:d }=await ocrOne(f);
+        newLines.push({ cost:"", amount:(d.total!=null?String(d.total):""), note:[d.vendor,d.description].filter(Boolean).join(" · ") });
+        addF.push(f);
+      }catch(e){ fail++; }
+    }
+    if(newLines.length) setAdvLines(a=>{ const base=(a.length===1 && !a[0].cost && !a[0].amount && !a[0].note)?[]:a; return [...base, ...newLines]; });
+    if(addF.length) setFiles(v=>[...v, ...addF]);
+    setOcrBusy(false);
+    setErr(fail? ("ถอดสำเร็จ "+newLines.length+" บิล · ไม่สำเร็จ "+fail+" ไฟล์ (ลองใหม่/ตรวจไฟล์)") : null);
+  }
+  // ถอดบิลใส่บรรทัด Advance ที่ระบุ
+  async function extractBillLine(i, f){
+    if(!f) return; setOcrBusy(true); setErr(null);
+    try{ const { data:d }=await ocrOne(f);
+      if(d.total!=null) setLine(i,"amount",String(d.total));
+      setLine(i,"note",[d.vendor,d.description].filter(Boolean).join(" · "));
+      setFiles(v=>[...v, f]);
     }catch(e){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(e?.message||e)); }
     setOcrBusy(false);
   }
@@ -407,6 +438,12 @@ export default function NewRequest(){
           ) : isAdvance ? (
           <div className="field">
             <label>รายการค่าใช้จ่าย (Clear Advance — ใส่ได้หลาย Cost) *</label>
+            <div style={{marginBottom:6}}>
+              <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBillsAdvance} style={{borderColor:"#2453A8",color:"#2453A8"}}>
+                {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดหลายบิล (เลือกหลายไฟล์ → เพิ่มบรรทัดอัตโนมัติ)"}
+              </button>
+              <div className="muted" style={{fontSize:10.5,marginTop:2}}>เลือกได้หลายไฟล์พร้อมกัน · 1 บิล = 1 บรรทัด (ยอด/รายละเอียดเติมให้ · เลือก Cost Code เอง)</div>
+            </div>
             <div style={{border:"1px solid #CFE3D6",borderRadius:8,overflow:"hidden"}}>
               <table style={{margin:0,fontSize:12.5}}><thead><tr style={{background:"#F0F7F2"}}>
                 <th style={{width:"34%"}}>Cost Code</th><th>รายละเอียด</th>
@@ -420,9 +457,11 @@ export default function NewRequest(){
                 <td><input value={l.note} onChange={e=>setLine(i,"note",e.target.value)} placeholder="เช่น ค่าเดินทาง..." style={{width:"100%"}}/></td>
                 <td><input type="number" value={l.amount} onChange={e=>setLine(i,"amount",e.target.value)} placeholder="0"
                   style={{width:"100%",textAlign:"right",...(isOver?{borderColor:"#B03A2E",boxShadow:"0 0 0 2px rgba(176,58,46,.12)"}:{})}}/></td>
-                <td style={{textAlign:"center"}}>{advLines.length>1&&
-                  <button type="button" onClick={()=>rmLine(i)} title="ลบบรรทัด"
-                    style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}</td>
+                <td style={{textAlign:"center",whiteSpace:"nowrap"}}>
+                  <label className="btn sm sec" style={{cursor:"pointer",fontSize:11,padding:"1px 4px",display:"inline-block",marginRight:3}} title="ถอดบิลใส่บรรทัดนี้">📷
+                    <input type="file" accept="image/*,application/pdf,.pdf" style={{display:"none"}} onChange={e=>{ const f=e.target.files&&e.target.files[0]; e.target.value=""; extractBillLine(i,f); }}/></label>
+                  {advLines.length>1&&<button type="button" onClick={()=>rmLine(i)} title="ลบบรรทัด" style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}
+                </td>
               </tr>); })}
               </tbody>
               <tfoot><tr style={{borderTop:"2px solid #DDE6E0",fontWeight:700,background:"#FAFDFB"}}>
