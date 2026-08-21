@@ -159,11 +159,26 @@ export default function NewRequest(){
     });
     return out;
   }
+  // เตรียมไฟล์ก่อนส่ง: รูป → ย่อ + บีบเป็น JPEG (กันไฟล์ใหญ่เกิน limit + ลด token) · PDF → ส่งตามเดิม
+  async function fileToPayload(f){
+    if(f.type && f.type.startsWith("image/")){
+      try{
+        const dataUrl=await toDataUrl(f);
+        const img=await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=dataUrl; });
+        const max=1600, scale=Math.min(1, max/Math.max(img.width,img.height));
+        const cw=Math.max(1,Math.round(img.width*scale)), ch=Math.max(1,Math.round(img.height*scale));
+        const cv=document.createElement("canvas"); cv.width=cw; cv.height=ch;
+        cv.getContext("2d").drawImage(img,0,0,cw,ch);
+        return { image:cv.toDataURL("image/jpeg",0.82), mime:"image/jpeg" };
+      }catch(e){ /* ถ้าย่อไม่ได้ ส่งไฟล์เดิม */ }
+    }
+    const dataUrl=await toDataUrl(f);
+    return { image:dataUrl, mime: f.type||(/\.pdf$/i.test(f.name)?"application/pdf":"image/jpeg") };
+  }
   async function ocrOne(f){
-    const b64=await toDataUrl(f);
-    const mime=f.type||(/\.pdf$/i.test(f.name)?"application/pdf":"image/jpeg");
-    const res=await fetch("/api/extract-bill",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image:b64,mime})});
-    const j=await res.json();
+    const { image, mime }=await fileToPayload(f);
+    const res=await fetch("/api/extract-bill",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image,mime})});
+    let j; try{ j=await res.json(); }catch(e){ throw new Error("HTTP "+res.status+" (ไฟล์อาจใหญ่เกิน หรือ endpoint ผิดพลาด)"); }
     if(!res.ok||j.error) throw new Error(j.error||("HTTP "+res.status));
     return { data:j.data||{}, model:j.model };
   }
@@ -185,17 +200,17 @@ export default function NewRequest(){
   async function extractBillsAdvance(){
     const fs=await pickImgs(); if(!fs.length) return;
     setOcrBusy(true); setErr(null);
-    const newLines=[]; const addF=[]; let fail=0;
+    const newLines=[]; const addF=[]; let fail=0; let lastErr="";
     for(const f of fs){
       try{ const { data:d }=await ocrOne(f);
         newLines.push({ cost:"", amount:(d.total!=null?String(d.total):""), note:[d.vendor,d.description].filter(Boolean).join(" · ") });
         addF.push(f);
-      }catch(e){ fail++; }
+      }catch(e){ fail++; lastErr=(e&&e.message)||String(e); }
     }
     if(newLines.length) setAdvLines(a=>{ const base=(a.length===1 && !a[0].cost && !a[0].amount && !a[0].note)?[]:a; return [...base, ...newLines]; });
     if(addF.length) setFiles(v=>[...v, ...addF]);
     setOcrBusy(false);
-    setErr(fail? ("ถอดสำเร็จ "+newLines.length+" บิล · ไม่สำเร็จ "+fail+" ไฟล์ (ลองใหม่/ตรวจไฟล์)") : null);
+    setErr(fail? ("ถอดสำเร็จ "+newLines.length+" บิล · ไม่สำเร็จ "+fail+" ไฟล์"+(lastErr?(" — "+lastErr):"")) : null);
   }
   // ถอดบิลใส่บรรทัด Advance ที่ระบุ
   async function extractBillLine(i, f){
