@@ -9,7 +9,7 @@ export async function POST(req){
     if(!image) return Response.json({ error:"ไม่พบรูปภาพ" }, { status:400 });
     const key = process.env.GEMINI_API_KEY;
     if(!key) return Response.json({ error:"ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน Vercel" }, { status:500 });
-    const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
     const b64 = String(image).replace(/^data:[^;]+;base64,/, "");
 
     const prompt =
