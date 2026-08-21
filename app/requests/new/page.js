@@ -182,6 +182,19 @@ export default function NewRequest(){
     if(!res.ok||j.error) throw new Error(j.error||("HTTP "+res.status));
     return { data:j.data||{}, model:j.model };
   }
+  // โหมดหลายรายการ: 1 ไฟล์ (ใบปะหน้า+บิลจริงหลายใบ) → คืน items[] แตกทีละบิล
+  async function ocrMulti(f){
+    const { image, mime }=await fileToPayload(f);
+    const res=await fetch("/api/extract-bill",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image,mime,multi:true})});
+    let j; try{ j=await res.json(); }catch(e){ throw new Error("HTTP "+res.status+" (ไฟล์อาจใหญ่เกิน หรือ endpoint ผิดพลาด)"); }
+    if(!res.ok||j.error) throw new Error(j.error||("HTTP "+res.status));
+    const d=j.data||{}; return { items:Array.isArray(d.items)?d.items:[], model:j.model };
+  }
+  // จับคู่ cost_code ที่ถอดได้ กับ cost code ในระบบ (ตรงเป๊ะ → มีในข้อความ) คืน id หรือ ""
+  const matchCode=(s)=>{ if(!s) return ""; const t=String(s).replace(/\s/g,"").toUpperCase();
+    const hit=codes.find(c=>String(c.code).replace(/\s/g,"").toUpperCase()===t)
+      || codes.find(c=>{ const cc=String(c.code).replace(/\s/g,"").toUpperCase(); return cc&&(t.includes(cc)||cc.includes(t)); });
+    return hit?hit.id:""; };
   const pickImgs=()=>new Promise(r=>{ const i=document.createElement("input"); i.type="file"; i.accept="image/*,application/pdf,.pdf"; i.multiple=true; i.onchange=()=>r(i.files?[...i.files]:[]); i.click(); });
   // ยอดเดี่ยว (OF/Billing/จัดซื้อ)
   async function extractBill(){
@@ -196,21 +209,31 @@ export default function NewRequest(){
     }catch(e){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(e?.message||e)); }
     setOcrBusy(false);
   }
-  // Clear Advance: เลือกหลายบิล → เพิ่มบรรทัดอัตโนมัติ 1 บิล/บรรทัด (cost code เลือกเอง)
+  // Clear Advance: เลือกไฟล์ (แต่ละไฟล์อาจมีใบปะหน้า+บิลจริงหลายใบ) → แตกเป็นหลายบรรทัด 1 บิล/บรรทัด + auto-match cost code
   async function extractBillsAdvance(){
     const fs=await pickImgs(); if(!fs.length) return;
     setOcrBusy(true); setErr(null);
-    const newLines=[]; const addF=[]; let fail=0; let lastErr="";
+    const newLines=[]; const addF=[]; let fail=0; let lastErr=""; let matched=0;
     for(const f of fs){
-      try{ const { data:d }=await ocrOne(f);
-        newLines.push({ cost:"", amount:(d.total!=null?String(d.total):""), note:[d.vendor,d.description].filter(Boolean).join(" · ") });
+      try{ const { items }=await ocrMulti(f);
+        if(!items.length){ fail++; lastErr="อ่านไม่พบรายการบิลในไฟล์ "+f.name; continue; }
+        for(const it of items){
+          const cid=matchCode(it.cost_code); if(cid) matched++;
+          newLines.push({
+            cost: cid,
+            amount: (it.amount!=null?String(it.amount):""),
+            note: [it.vendor, it.description, (!cid&&it.cost_code)?("[งบ: "+it.cost_code+"]"):""].filter(Boolean).join(" · "),
+          });
+        }
         addF.push(f);
       }catch(e){ fail++; lastErr=(e&&e.message)||String(e); }
     }
     if(newLines.length) setAdvLines(a=>{ const base=(a.length===1 && !a[0].cost && !a[0].amount && !a[0].note)?[]:a; return [...base, ...newLines]; });
     if(addF.length) setFiles(v=>[...v, ...addF]);
     setOcrBusy(false);
-    setErr(fail? ("ถอดสำเร็จ "+newLines.length+" บิล · ไม่สำเร็จ "+fail+" ไฟล์"+(lastErr?(" — "+lastErr):"")) : null);
+    setErr(newLines.length
+      ? ("ถอดได้ "+newLines.length+" รายการ"+(matched?(" · จับคู่ cost code อัตโนมัติ "+matched):"")+(fail?(" · มีไฟล์อ่านไม่สำเร็จ "+fail+(lastErr?(" — "+lastErr):"")):"")+" — ตรวจ Cost Code/ยอดทุกบรรทัดก่อนส่ง")
+      : ("ถอดไม่สำเร็จ "+fail+" ไฟล์"+(lastErr?(" — "+lastErr):"")));
   }
   // ถอดบิลใส่บรรทัด Advance ที่ระบุ
   async function extractBillLine(i, f){
@@ -455,9 +478,9 @@ export default function NewRequest(){
             <label>รายการค่าใช้จ่าย (Clear Advance — ใส่ได้หลาย Cost) *</label>
             <div style={{marginBottom:6}}>
               <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBillsAdvance} style={{borderColor:"#2453A8",color:"#2453A8"}}>
-                {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดหลายบิล (เลือกหลายไฟล์ → เพิ่มบรรทัดอัตโนมัติ)"}
+                {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดหลายบิล (ไฟล์ใบปะหน้า+บิล → แตกหลายบรรทัดให้)"}
               </button>
-              <div className="muted" style={{fontSize:10.5,marginTop:2}}>เลือกได้หลายไฟล์พร้อมกัน · 1 บิล = 1 บรรทัด (ยอด/รายละเอียดเติมให้ · เลือก Cost Code เอง)</div>
+              <div className="muted" style={{fontSize:10.5,marginTop:2}}>รองรับไฟล์เดียวที่มีใบปะหน้า+บิลจริงหลายใบ (หรือเลือกหลายไฟล์) · 1 บิล = 1 บรรทัด · ยอด/รายละเอียดเติมให้ · จับคู่ Cost Code จากใบปะหน้าอัตโนมัติ (ตรวจซ้ำก่อนส่ง)</div>
             </div>
             <div style={{border:"1px solid #CFE3D6",borderRadius:8,overflow:"hidden"}}>
               <table style={{margin:0,fontSize:12.5}}><thead><tr style={{background:"#F0F7F2"}}>
