@@ -60,7 +60,7 @@ export default function Shell({ children, title }) {
     const fin=[["/budget-exec","Dashboard งบประมาณ"],["/projects","ต้นทุนโครงการ"],
       ["/budget","งบประมาณฝ่าย"],["/reports","รายงานปิดเดือน"]];
     nav=[{sec:"งาน Service Desk",items:work},{sec:"งบประมาณ & การเงิน",items:fin}];
-    if(canManage) nav.push({sec:"ตั้งค่า",items:[["/admin","จัดการผู้ใช้"]]});
+    if(canManage) nav.push({sec:"ตั้งค่า",items:[["/admin","จัดการผู้ใช้"],["/admin/budget","นำเข้างบโครงการ (BF)"]]});
   }
   const roleLabel = role==="owner"?" · Owner":role==="lead"?" · Lead":role==="supervisor"?" · Supervisor":isStaff?" · Hub":"";
   if (!ready) return <div style={{padding:40,color:"#5A6672"}}>กำลังโหลด…</div>;
