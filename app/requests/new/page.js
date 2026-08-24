@@ -574,7 +574,8 @@ export default function NewRequest(){
               <div style={{fontWeight:700,color:"#8A5A00",marginBottom:3}}>🟡 ข้อมูลจากบิล — โปรดตรวจสอบก่อนส่ง{ocr.confidence!=null&&<span style={{fontWeight:400}}> (ความมั่นใจ {Math.round(Number(ocr.confidence)*100)}%)</span>}</div>
               <div style={{color:"#5A4A20",lineHeight:1.7}}>
                 ร้าน: <b>{ocr.vendor||"—"}</b> · วันที่: <b>{ocr.date||"—"}</b> · เลขที่: <b>{ocr.doc_no||"—"}</b><br/>
-                ยอดรวม: <b>{ocr.total!=null?fmtMoney(ocr.total):"—"}</b> · VAT: {ocr.vat!=null?fmtMoney(ocr.vat):"—"} · เลขภาษี: {ocr.tax_id||"—"}
+                ยอดรวม (บาท): <b>{ocr.total!=null?fmtMoney(ocr.total):"—"}</b> · VAT: {ocr.vat!=null?fmtMoney(ocr.vat):"—"} · เลขภาษี: {ocr.tax_id||"—"}
+                {ocr.fx_amount!=null&&<><br/><span style={{color:"#8A5A00"}}>สกุลต่างประเทศ: {ocr.fx_currency||"FX"} {fmtMoney(ocr.fx_amount)} → เก็บเป็นยอดบาท {ocr.total!=null?fmtMoney(ocr.total):"—"} ✓</span></>}
                 {ocr.description?<><br/>รายการ: {ocr.description}</>:null}
               </div>
               <div className="muted" style={{fontSize:10.5,marginTop:3}}>ระบบเติมช่อง "จำนวนเงิน" + แนบรูปบิลให้อัตโนมัติแล้ว · แก้ไขได้ถ้าอ่านไม่ตรง</div>
