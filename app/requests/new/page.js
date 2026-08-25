@@ -82,6 +82,9 @@ export default function NewRequest(){
   const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
   // Advance / Clear Advance = 1 OF มีได้หลาย cost → ยอดรวมทั้งใบใช้เช็คงบ/อนุมัติ
   const isAdvance = !!needExpense && /advance/i.test(sel?.name||"");
+  // ค่ารับรองลูกค้า (ประกาศ AMR0X/2569): ≤10,000 บาท/ครั้ง → C-Level · >10,000 → CEO
+  const isEnt = /Client Entertainment/.test(fd?.doc_type||"");
+  const ENT_CEO_LIMIT = 10000;
   // งานที่ "ตั้งเบิกตาม commit เดิม" (เช่น Billing วางบิลตาม WO ที่ตัดงบแล้ว) → ไม่เช็ค/ไม่ตัดงบซ้ำ
   const skipBudget = !!sel?.skip_budget_check;
   // ── ค่าเดินทางรถส่วนตัว: กม. = ไมล์กลับ−ไป · เงิน = กม.×7 · recheck vs Google Maps (ส่วนต่าง>10 = ⚠) ──
@@ -645,6 +648,15 @@ export default function NewRequest(){
               : <div style={{marginTop:8,fontSize:12,color:"#B03A2E"}}>ยังขาด: {govMsg}</div>)}
           </div>)}
         </div>)}
+        {isEnt&&amt>0&&(amt>ENT_CEO_LIMIT
+          ? <div style={{margin:"10px 0",background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:8,padding:"10px 14px"}}>
+              <div style={{fontSize:13,color:"#B03A2E",fontWeight:800}}>⛔ ค่ารับรอง {fmtMoney(amt)} บาท (เกิน 10,000/ครั้ง) — ต้องได้รับอนุมัติจาก CEO ก่อน</div>
+              <div style={{fontSize:11.5,color:"#7A3B34",marginTop:3}}>แนบหลักฐานอนุมัติจาก CEO ในช่อง “หลักฐานอนุมัติค่ารับรอง” ด้านล่าง — ไม่แนบจะส่งคำขอไม่ได้ (ประกาศ AMR0X/2569)</div>
+            </div>
+          : <div style={{margin:"10px 0",background:"#FFF9F0",border:"1.5px solid #EBD9AE",borderRadius:8,padding:"10px 14px"}}>
+              <div style={{fontSize:13,color:"#8A5A00",fontWeight:800}}>📋 ค่ารับรอง {fmtMoney(amt)} บาท (≤10,000/ครั้ง) — ต้องได้รับอนุมัติจาก C-Level ของหน่วยงาน</div>
+              <div style={{fontSize:11.5,color:"#5A4A20",marginTop:3}}>แนบหลักฐานอนุมัติจาก C-Level ในช่อง “หลักฐานอนุมัติค่ารับรอง” ด้านล่าง — ไม่แนบจะส่งคำขอไม่ได้ (ประกาศ AMR0X/2569)</div>
+            </div>)}
         {sel&&<DocSlots slots={sel.doc_slots} picked={docs} onChange={setDocs}
           extra={files} onExtra={setFiles} formData={fd}/>}
 
