@@ -495,7 +495,7 @@ export default function NewRequest(){
               </button>
               <div className="muted" style={{fontSize:10.5,marginTop:2}}>รองรับไฟล์เดียวที่มีใบปะหน้า+บิลจริงหลายใบ (หรือเลือกหลายไฟล์) · 1 บิล = 1 บรรทัด · ยอด/รายละเอียดเติมให้ · จับคู่ Cost Code จากใบปะหน้าอัตโนมัติ (ตรวจซ้ำก่อนส่ง)</div>
             </div>
-            <div style={{border:"1px solid #CFE3D6",borderRadius:8,overflow:"hidden"}}>
+            <div style={{border:"1px solid #CFE3D6",borderRadius:8,overflow:"visible"}}>
               <table style={{margin:0,fontSize:12.5}}><thead><tr style={{background:"#F0F7F2"}}>
                 <th style={{width:"34%"}}>Cost Code</th><th>รายละเอียด</th>
                 <th className="right" style={{width:130}}>จำนวนเงิน</th><th style={{width:34}}></th>
