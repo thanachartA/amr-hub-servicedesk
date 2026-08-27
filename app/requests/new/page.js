@@ -48,6 +48,7 @@ export default function NewRequest(){
   const [excomFile,setExcomFile]=useState(null);// มติ Excom (Capex)
   const [excomAck,setExcomAck]=useState(false);
   const [advLines,setAdvLines]=useState([{cost:"",amount:"",note:"",refund:false,slip:false}]);  // Clear Advance: หลาย cost ใน 1 OF
+  const [fxOn,setFxOn]=useState(false); const [fx,setFx]=useState({cur:"",amt:"",rate:""});  // อัตราแลกเปลี่ยน → คิดบาทอัตโนมัติ
   const [ccMap,setCcMap]=useState({});   // งบเหลือราย cost code ของโครงการ (ใช้เช็ค Advance รายบรรทัด)
   const [trips,setTrips]=useState([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);  // ค่าเดินทางหลายเที่ยว
   const [ocr,setOcr]=useState(null); const [ocrBusy,setOcrBusy]=useState(false);   // ถอดข้อมูลจากบิล (AI)
@@ -132,9 +133,12 @@ export default function NewRequest(){
       setMemoFile(null); setExcomFile(null); setExcomAck(false);
       setAdvLines([{cost:"",amount:"",note:"",refund:false,slip:false}]);
       setTrips([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);
-      setOcr(null);
+      setOcr(null); setFxOn(false); setFx({cur:"",amt:"",rate:""});
       setLinks([]); setLU(""); setLL(""); }
   }
+  // อัตราแลกเปลี่ยน: ยอดบาท = ยอดสกุลต่างประเทศ × เรต → เติมช่องจำนวนเงินอัตโนมัติ
+  const fxThb = (Number(fx.amt)>0 && Number(fx.rate)>0) ? Math.round(Number(fx.amt)*Number(fx.rate)*100)/100 : 0;
+  useEffect(()=>{ if(fxOn && fxThb>0) setForm(s=>({...s, amount:String(fxThb)})); }, [fxOn, fxThb]);
   // ── หลาย cost line (Clear Advance) ──
   const setLine=(i,k,v)=>setAdvLines(a=>a.map((l,idx)=>idx===i?{...l,[k]:v}:l));
   const addLine=()=>setAdvLines(a=>[...a,{cost:"",amount:"",note:"",refund:false,slip:false}]);
@@ -152,6 +156,10 @@ export default function NewRequest(){
   // แม็พข้อมูลจากบิล → ช่องในฟอร์ม (ตาม label/ประเภทช่อง) เติมเฉพาะช่องที่ยังว่าง
   function ocrToFd(d, schema, prev){
     const out={...(prev||{})};
+    // สกุลต่างประเทศล้วน (ไม่มียอดบาท) → ห้ามเติมช่องจำนวนเงินอัตโนมัติ
+    const _cur=String(d.currency||"").toUpperCase();
+    const _foreignNoThb = ((d.fx_amount!=null && String(d.fx_currency||"").toUpperCase()!=="THB") || (_cur&&_cur!=="THB"))
+      && (d.total==null || (_cur&&_cur!=="THB") || Number(d.total)===Number(d.fx_amount));
     (schema||[]).forEach(f=>{
       const lab=((f.label||"")+" "+(f.key||""));
       const cur=out[f.key]; const empty=(cur==null||cur==="");
@@ -163,7 +171,7 @@ export default function NewRequest(){
       if(d.doc_no && (f.type==="text"||!f.type) && /เลขที่/.test(lab) && /บิล|ใบเสร็จ|invoice|กำกับ|เอกสาร/i.test(lab)) out[f.key]=String(d.doc_no);
       else if(d.vendor && f.type!=="number" && /ร้าน|ผู้รับเงิน|บริษัท|ผู้ขาย|ผู้จำหน่าย|vendor/i.test(lab) && !/ประเภท|ที่อยู่|address/i.test(lab)) out[f.key]=String(d.vendor);
       else if(d.description && (f.type==="textarea"||f.type==="text"||!f.type) && /รายละเอียด|รายการ|วัตถุประสงค์|detail|desc/i.test(lab)) out[f.key]=String(d.description);
-      else if(d.total!=null && f.type==="number" && /จำนวนเงิน|ยอด|รวม|amount/i.test(lab)) out[f.key]=Number(d.total);
+      else if(d.total!=null && !_foreignNoThb && f.type==="number" && /จำนวนเงิน|ยอด|รวม|amount/i.test(lab)) out[f.key]=Number(d.total);
       else if(d.date && f.type==="date" && /วันที่/.test(lab) && !/รับเงิน|due|กำหนด|ครบ/i.test(lab)) out[f.key]=String(d.date);
     });
     return out;
@@ -211,8 +219,16 @@ export default function NewRequest(){
     setOcrBusy(true); setErr(null);
     try{
       const { data:d, model }=await ocrOne(f);
-      setOcr({...d, model});
-      if(Number(d.total)>0) up("amount", String(d.total));
+      // ⛔ ตรวจสกุลเงิน: ถ้าเป็นสกุลต่างประเทศ ‘ล้วน’ (ไม่มียอดบาท เช่น PR/ใบเสนอราคา USD ที่ยังไม่ระบุ exchange rate)
+      //    ห้ามเติมตัวเลขต่างประเทศลงช่องบาท เพราะจะตัดงบผิด — ให้ผู้ใช้กรอกยอดบาทเอง
+      const cur=String(d.currency||"").toUpperCase();
+      const fxc=String(d.fx_currency||"").toUpperCase();
+      const hasFx = d.fx_amount!=null && fxc && fxc!=="THB";
+      const thbTotal = (cur && cur!=="THB") ? null : (Number(d.total)>0 ? Number(d.total) : null);
+      const foreignNoThb = (hasFx || (cur && cur!=="THB")) && (thbTotal==null || thbTotal===Number(d.fx_amount));
+      setOcr({...d, model, _foreign: foreignNoThb, _fxc: fxc||cur});
+      if(foreignNoThb){ setFxOn(true); setFx(v=>({cur:(fxc||cur||v.cur), amt:(d.fx_amount!=null?String(d.fx_amount):v.amt), rate:v.rate})); }
+      if(!foreignNoThb && thbTotal>0) up("amount", String(thbTotal));
       setFd(prev=>ocrToFd(d, sel?.form_schema, prev));   // เติมช่องในฟอร์มให้ด้วย (เฉพาะที่ว่าง)
       setFiles(v=>[...v, f]);   // แนบบิลเป็นหลักฐานอัตโนมัติ
     }catch(e){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(e?.message||e)); }
@@ -326,7 +342,10 @@ export default function NewRequest(){
       form_data: isTravel ? {...fd, rate:RATE_KM, total_km:travelKm,
         trips: trips.filter(t=>tripKm(t)>0).map((t,i)=>({no:i+1,date:t.date,vtype:t.vtype,dest:t.dest,
           odo_out:Number(t.odoOut),odo_in:Number(t.odoIn),km:tripKm(t),maps_km:Number(t.mapsKm),
-          diff:tripDiff(t),over:tripOver(t),reason:t.reason||"",amount:tripKm(t)*RATE_KM})) } : (ocr ? {...fd, _ocr:{...ocr, confirmed_total:amt, at:new Date().toISOString()}} : fd)
+          diff:tripDiff(t),over:tripOver(t),reason:t.reason||"",amount:tripKm(t)*RATE_KM})) }
+          : { ...fd,
+              ...(ocr ? { _ocr:{...ocr, confirmed_total:amt, at:new Date().toISOString()} } : {}),
+              ...(fxOn && fxThb>0 ? { _fx:{ currency:fx.cur||null, fx_amount:Number(fx.amt)||null, rate:Number(fx.rate)||null, thb:fxThb } } : {}) }
     }).select().single();
     if(error){ setErr(error.message); setBusy(false); return; }
     if(needExpense && (amt>0 || (isAdvance && advRefund>0))){
@@ -554,19 +573,41 @@ export default function NewRequest(){
             </div>}
           </div>
           ) : (
+          <>
           <div className="row2">
             <div className="field"><label>Cost Code (ERP)</label>
               <Combobox options={codes.map(c=>({value:c.id,label:c.code+" · "+c.name,sub:c.name}))}
                 value={form.cost} onChange={v=>up("cost",v)}
                 placeholder="🔎 พิมพ์รหัส/ชื่อ cost code" emptyLabel="— เลือก —"
                 searchPlaceholder="🔎 พิมพ์รหัส/ชื่อ cost code"/></div>
-            <div className="field"><label>จำนวนเงิน (บาท)</label>
-              <input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0"
-                style={overBudget?{borderColor:"#B03A2E",boxShadow:"0 0 0 3px rgba(176,58,46,.12)"}:undefined}/>
+            <div className="field"><label>จำนวนเงิน (บาท){fxOn&&fxThb>0&&<span style={{color:"#2E7D5B",fontWeight:400}}> · คิดจากอัตราแลกเปลี่ยนแล้ว</span>}</label>
+              <input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0" readOnly={fxOn&&fxThb>0}
+                style={overBudget?{borderColor:"#B03A2E",boxShadow:"0 0 0 3px rgba(176,58,46,.12)"}:(fxOn&&fxThb>0?{background:"#F0F9F3"}:undefined)}/>
               {overBudget&&<div style={{fontSize:11.5,color:"#B03A2E",fontWeight:700,marginTop:4}}>
                 🚫 เกินงบคงเหลือ {fmtMoney(amt-Number(bud.left))}</div>}
             </div>
           </div>
+          <div style={{marginTop:6}}>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontWeight:400,color:"#20232A",fontSize:12.5}}>
+              <input type="checkbox" checked={fxOn} onChange={e=>setFxOn(e.target.checked)} style={{width:"auto",margin:0}}/>
+              บิลเป็นสกุลต่างประเทศ — คิดอัตราแลกเปลี่ยนเป็นบาทอัตโนมัติ
+            </label>
+            {fxOn&&<div style={{marginTop:6,background:"#FFF9F0",border:"1px solid #EBD9AE",borderRadius:8,padding:"10px 12px"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1.3fr 1.3fr",gap:8}}>
+                <div><label style={{fontSize:11.5,color:"#5A4A20"}}>สกุลเงิน</label>
+                  <input value={fx.cur} onChange={e=>setFx(v=>({...v,cur:e.target.value.toUpperCase()}))} placeholder="USD" style={{width:"100%",textTransform:"uppercase"}}/></div>
+                <div><label style={{fontSize:11.5,color:"#5A4A20"}}>ยอดสกุลต่างประเทศ</label>
+                  <input type="number" value={fx.amt} onChange={e=>setFx(v=>({...v,amt:e.target.value}))} placeholder="0.00" style={{width:"100%",textAlign:"right"}}/></div>
+                <div><label style={{fontSize:11.5,color:"#5A4A20"}}>อัตราแลกเปลี่ยน (บาท/หน่วย)</label>
+                  <input type="number" value={fx.rate} onChange={e=>setFx(v=>({...v,rate:e.target.value}))} placeholder="เช่น 34.50" style={{width:"100%",textAlign:"right",...(!(Number(fx.rate)>0)&&Number(fx.amt)>0?{borderColor:"#B26A00"}:{})}}/></div>
+              </div>
+              <div style={{marginTop:8,fontSize:13,fontWeight:800,color:fxThb>0?"#2E7D5B":"#8A5A00"}}>
+                {fxThb>0 ? "= "+fmtMoney(fxThb)+" บาท  →  ใส่ในช่องจำนวนเงินให้แล้ว ✓" : "กรอกยอดสกุลต่างประเทศ + อัตราแลกเปลี่ยน เพื่อคิดเป็นบาท"}
+              </div>
+              <div className="muted" style={{fontSize:10.5,marginTop:2}}>ระบบตัดงบด้วย "ยอดบาท" ที่คำนวณได้ · โปรดระบุอัตราแลกเปลี่ยนตามที่ตกลง (เช่น เรตซื้อธนาคาร ณ วันเปิด PR)</div>
+            </div>}
+          </div>
+          </>
           )}
           {needExpense&&!isTravel&&!isAdvance&&(<div style={{marginTop:8}}>
             <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBill}
@@ -578,10 +619,15 @@ export default function NewRequest(){
               <div style={{color:"#5A4A20",lineHeight:1.7}}>
                 ร้าน: <b>{ocr.vendor||"—"}</b> · วันที่: <b>{ocr.date||"—"}</b> · เลขที่: <b>{ocr.doc_no||"—"}</b><br/>
                 ยอดรวม (บาท): <b>{ocr.total!=null?fmtMoney(ocr.total):"—"}</b> · VAT: {ocr.vat!=null?fmtMoney(ocr.vat):"—"} · เลขภาษี: {ocr.tax_id||"—"}
-                {ocr.fx_amount!=null&&<><br/><span style={{color:"#8A5A00"}}>สกุลต่างประเทศ: {ocr.fx_currency||"FX"} {fmtMoney(ocr.fx_amount)} → เก็บเป็นยอดบาท {ocr.total!=null?fmtMoney(ocr.total):"—"} ✓</span></>}
+                {ocr.fx_amount!=null&&!ocr._foreign&&<><br/><span style={{color:"#8A5A00"}}>สกุลต่างประเทศ: {ocr.fx_currency||"FX"} {fmtMoney(ocr.fx_amount)} → เก็บเป็นยอดบาท {ocr.total!=null?fmtMoney(ocr.total):"—"} ✓</span></>}
                 {ocr.description?<><br/>รายการ: {ocr.description}</>:null}
               </div>
-              <div className="muted" style={{fontSize:10.5,marginTop:3}}>ระบบเติมช่อง "จำนวนเงิน" + แนบรูปบิลให้อัตโนมัติแล้ว · แก้ไขได้ถ้าอ่านไม่ตรง</div>
+              {ocr._foreign
+                ? <div style={{marginTop:6,background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:6,padding:"7px 10px"}}>
+                    <div style={{fontSize:12,color:"#B03A2E",fontWeight:800}}>⛔ บิลนี้เป็นสกุล {ocr._fxc||ocr.fx_currency||"ต่างประเทศ"} {ocr.fx_amount!=null?fmtMoney(ocr.fx_amount):""} — ไม่มียอดเงินบาท / ยังไม่ระบุอัตราแลกเปลี่ยน</div>
+                    <div style={{fontSize:11,color:"#7A3B34",marginTop:2}}>ระบบเปิดช่อง <b>“อัตราแลกเปลี่ยน”</b> ด้านล่างให้แล้ว — กรอกเรต (บาท/หน่วย) ระบบจะคิดเป็นบาทและใส่ช่องจำนวนเงินให้อัตโนมัติ · <b>ห้ามใช้ยอดสกุลต่างประเทศเป็นบาทตรงๆ</b> จะตัดงบผิด</div>
+                  </div>
+                : <div className="muted" style={{fontSize:10.5,marginTop:3}}>ระบบเติมช่อง "จำนวนเงิน" + แนบรูปบิลให้อัตโนมัติแล้ว · แก้ไขได้ถ้าอ่านไม่ตรง</div>}
             </div>}
           </div>)}
           {/* งบคงเหลือราย Cost Code (ฐานต้นทุนจัดซื้อ ตรง ERP) */}
