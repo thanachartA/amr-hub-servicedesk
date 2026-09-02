@@ -14,6 +14,14 @@ export default function Login(){
   useEffect(()=>{ supabase.auth.getSession().then(({data})=>{ if(data.session) router.replace("/"); }); },[]);
   const clr=()=>{ setErr(null); setMsg(null); };
 
+  async function msLogin(){ clr(); setBusy(true);
+    const { error }=await supabase.auth.signInWithOAuth({
+      provider:"azure",
+      options:{ scopes:"email openid profile", redirectTo: ORIGIN() }
+    });
+    if(error){ setBusy(false); setErr("เข้าสู่ระบบด้วย Microsoft ไม่สำเร็จ: "+error.message); }
+  }
+
   async function pwLogin(e){ e.preventDefault(); clr();
     if(!okDomain(email)){ setErr("กรุณาใช้อีเมลบริษัท @amrasia.com เท่านั้น"); return; }
     setBusy(true);
@@ -59,13 +67,24 @@ export default function Login(){
     <p>Service Desk · เข้าใช้งานด้วยอีเมลบริษัท</p>
     {err&&<div className="err">{err}</div>}{msg&&<div className="ok">{msg}</div>}
 
+    <button type="button" onClick={msLogin} disabled={busy}
+      style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10,
+        padding:"11px 0",border:"1px solid #d0d5dd",borderRadius:8,background:"#fff",
+        cursor:"pointer",fontSize:14,fontWeight:600,color:"#1f2937"}}>
+      <svg width="18" height="18" viewBox="0 0 23 23" aria-hidden="true"><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg>
+      {busy?"กำลังเข้า…":"เข้าสู่ระบบด้วย Microsoft"}
+    </button>
+    <div style={{display:"flex",alignItems:"center",gap:10,margin:"14px 0",color:"#98A4AE",fontSize:12}}>
+      <div style={{flex:1,height:1,background:"#e5e7eb"}}></div>หรือ<div style={{flex:1,height:1,background:"#e5e7eb"}}></div>
+    </div>
+
     {mode==="pw" && (
       <form onSubmit={pwLogin}>
         <div className="field"><label>อีเมลบริษัท</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@amrasia.com" autoFocus/></div>
         <div className="field"><label>รหัสผ่าน</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="รหัสผ่าน"/></div>
         <button className="btn" style={{width:"100%"}} disabled={busy||!email||!pw}>{busy?"กำลังเข้า…":"เข้าสู่ระบบ"}</button>
         <div style={{display:"flex",justifyContent:"space-between",marginTop:12,fontSize:13}}>
-          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("signup");}} style={{color:"#EA0029"}}>ตั้งรหัสผ่านครั้งแรก</a>
+          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("signup");}} style={{color:"#E81828"}}>ตั้งรหัสผ่านครั้งแรก</a>
           <a href="#" onClick={e=>{e.preventDefault();forgot();}} style={{color:"#5A6672"}}>ลืมรหัสผ่าน?</a>
         </div>
         <div style={{textAlign:"center",marginTop:10}}>
@@ -81,7 +100,7 @@ export default function Login(){
         <div className="field"><label>ยืนยันรหัสผ่าน</label><input type="password" value={pw2} onChange={e=>setPw2(e.target.value)} placeholder="พิมพ์รหัสผ่านอีกครั้ง"/></div>
         <button className="btn" style={{width:"100%"}} disabled={busy||!email||!pw||!pw2}>{busy?"กำลังตั้ง…":"ตั้งรหัสผ่านและเข้าใช้งาน"}</button>
         <div style={{textAlign:"center",marginTop:12}}>
-          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("pw");}} style={{fontSize:13,color:"#EA0029"}}>← มีรหัสผ่านแล้ว เข้าสู่ระบบ</a>
+          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("pw");}} style={{fontSize:13,color:"#E81828"}}>← มีรหัสผ่านแล้ว เข้าสู่ระบบ</a>
         </div>
       </form>
     )}
@@ -91,7 +110,7 @@ export default function Login(){
         <div className="field"><label>อีเมลบริษัท</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@amrasia.com" autoFocus/></div>
         <button className="btn" style={{width:"100%"}} disabled={busy||!email}>{busy?"กำลังส่ง…":"ส่งลิงก์เข้าสู่ระบบ"}</button>
         <div style={{textAlign:"center",marginTop:12}}>
-          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("pw");}} style={{fontSize:13,color:"#EA0029"}}>← กลับไปเข้าด้วยรหัสผ่าน</a>
+          <a href="#" onClick={e=>{e.preventDefault();clr();setMode("pw");}} style={{fontSize:13,color:"#E81828"}}>← กลับไปเข้าด้วยรหัสผ่าน</a>
         </div>
       </form>
     )}
