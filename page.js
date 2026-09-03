@@ -48,6 +48,8 @@ export default function NewRequest(){
   const [excomFile,setExcomFile]=useState(null);// มติ Excom (Capex)
   const [excomAck,setExcomAck]=useState(false);
   const [advLines,setAdvLines]=useState([{cost:"",amount:"",note:"",refund:false,slip:false}]);  // Clear Advance: หลาย cost ใน 1 OF
+  const [fxOn,setFxOn]=useState(false); const [fx,setFx]=useState({cur:"",amt:"",rate:""});  // อัตราแลกเปลี่ยน → คิดบาทอัตโนมัติ
+  const [multiCost,setMultiCost]=useState(false);  // OF: แยกหลาย Cost Code (ค่าอุปกรณ์/เดินทาง/อื่นๆ ใน 1 ใบ)
   const [ccMap,setCcMap]=useState({});   // งบเหลือราย cost code ของโครงการ (ใช้เช็ค Advance รายบรรทัด)
   const [trips,setTrips]=useState([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);  // ค่าเดินทางหลายเที่ยว
   const [ocr,setOcr]=useState(null); const [ocrBusy,setOcrBusy]=useState(false);   // ถอดข้อมูลจากบิล (AI)
@@ -82,9 +84,10 @@ export default function NewRequest(){
   const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
   // Advance / Clear Advance = 1 OF มีได้หลาย cost → ยอดรวมทั้งใบใช้เช็คงบ/อนุมัติ
   const isAdvance = !!needExpense && /advance/i.test(sel?.name||"");
-  // ค่ารับรองลูกค้า (ประกาศ AMR0X/2569): ≤10,000 บาท/ครั้ง → C-Level · >10,000 → CEO
+  const useLines = isAdvance || (multiCost && !!needExpense);  // ใช้ตารางหลาย cost code (Advance หรือ OF แยกหลาย cost)
+  // ค่ารับรองลูกค้า (ประกาศ AMR14/2569): ≤3,000 → ผอ.ฝ่าย · ≤20,000 → C-Level · >20,000 → CEO (ต่อคน/ครั้ง)
   const isEnt = /Client Entertainment/.test(fd?.doc_type||"");
-  const ENT_CEO_LIMIT = 10000;
+  const ENT_DIR_LIMIT = 3000, ENT_CEO_LIMIT = 20000;
   // งานที่ "ตั้งเบิกตาม commit เดิม" (เช่น Billing วางบิลตาม WO ที่ตัดงบแล้ว) → ไม่เช็ค/ไม่ตัดงบซ้ำ
   const skipBudget = !!sel?.skip_budget_check;
   // ── ค่าเดินทางรถส่วนตัว: กม. = ไมล์กลับ−ไป · เงิน = กม.×7 · recheck vs Google Maps (ส่วนต่าง>10 = ⚠) ──
@@ -98,12 +101,13 @@ export default function NewRequest(){
   const advExpense = advLines.reduce((s,l)=>s+(l.refund?0:nAmt(l.amount)),0);  // ค่าใช้จ่ายจริง (มี cost code)
   const advRefund  = advLines.reduce((s,l)=>s+(l.refund?nAmt(l.amount):0),0);   // เงินคืน (ไม่มี cost code)
   const advTotal = advExpense;   // amt = เฉพาะค่าใช้จ่ายจริง (เงินคืนไม่ใช่ค่าใช้จ่าย/ไม่ตัดงบ)
-  const amt = isTravel ? travelTotal : (isAdvance ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0));
-  const overBudget = !skipBudget && bud?.has_budget && amt>0 && amt > Number(bud.left);
+  const amt = isTravel ? travelTotal : (useLines ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0));
+  // โหมดหลาย cost code (Advance/OF แยก) เช็คงบราย "บรรทัด" (advOver) ไม่ใช่ยอดรวมกับ cost เดี่ยว → กัน bud ค้างจาก form.cost มาบล็อก
+  const overBudget = !useLines && !skipBudget && bud?.has_budget && amt>0 && amt > Number(bud.left);
   // ── Advance: เช็คงบราย cost code รายบรรทัด (รวมยอดต่อ cost code แล้วเทียบงบเหลือ) ──
   const advByCost = {};
-  if(isAdvance && !skipBudget) advLines.forEach(l=>{ if(l.cost && !l.refund){ const a=nAmt(l.amount); advByCost[l.cost]=(advByCost[l.cost]||0)+a; } });
-  const advOverList = (isAdvance && !skipBudget)
+  if(useLines && !skipBudget) advLines.forEach(l=>{ if(l.cost && !l.refund){ const a=nAmt(l.amount); advByCost[l.cost]=(advByCost[l.cost]||0)+a; } });
+  const advOverList = (useLines && !skipBudget)
     ? Object.entries(advByCost).filter(([cid,sum])=>{ const cc=ccMap[cid]; return cc && cc.has_budget && sum > cc.remaining; })
     : [];
   const advOver = advOverList.length>0;
@@ -132,9 +136,14 @@ export default function NewRequest(){
       setMemoFile(null); setExcomFile(null); setExcomAck(false);
       setAdvLines([{cost:"",amount:"",note:"",refund:false,slip:false}]);
       setTrips([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);
-      setOcr(null);
+      setOcr(null); setFxOn(false); setFx({cur:"",amt:"",rate:""}); setMultiCost(false);
       setLinks([]); setLU(""); setLL(""); }
   }
+  // อัตราแลกเปลี่ยน: ยอดบาท = ยอดสกุลต่างประเทศ × เรต → เติมช่องจำนวนเงินอัตโนมัติ
+  const fxThb = (Number(fx.amt)>0 && Number(fx.rate)>0) ? Math.round(Number(fx.amt)*Number(fx.rate)*100)/100 : 0;
+  useEffect(()=>{ if(fxOn && fxThb>0) setForm(s=>({...s, amount:String(fxThb)})); }, [fxOn, fxThb]);
+  // OF แยกหลาย Cost Code: sync ยอดรวมจากตารางเข้าช่อง "จำนวนเงินรวม" (form_schema) กันบล็อกตอนส่ง
+  useEffect(()=>{ if(multiCost && !isAdvance) setFd(f=>({...f, amount:String(amt||"")})); }, [multiCost, isAdvance, amt]);
   // ── หลาย cost line (Clear Advance) ──
   const setLine=(i,k,v)=>setAdvLines(a=>a.map((l,idx)=>idx===i?{...l,[k]:v}:l));
   const addLine=()=>setAdvLines(a=>[...a,{cost:"",amount:"",note:"",refund:false,slip:false}]);
@@ -223,6 +232,7 @@ export default function NewRequest(){
       const thbTotal = (cur && cur!=="THB") ? null : (Number(d.total)>0 ? Number(d.total) : null);
       const foreignNoThb = (hasFx || (cur && cur!=="THB")) && (thbTotal==null || thbTotal===Number(d.fx_amount));
       setOcr({...d, model, _foreign: foreignNoThb, _fxc: fxc||cur});
+      if(foreignNoThb){ setFxOn(true); setFx(v=>({cur:(fxc||cur||v.cur), amt:(d.fx_amount!=null?String(d.fx_amount):v.amt), rate:v.rate})); }
       if(!foreignNoThb && thbTotal>0) up("amount", String(thbTotal));
       setFd(prev=>ocrToFd(d, sel?.form_schema, prev));   // เติมช่องในฟอร์มให้ด้วย (เฉพาะที่ว่าง)
       setFiles(v=>[...v, f]);   // แนบบิลเป็นหลักฐานอัตโนมัติ
@@ -292,18 +302,18 @@ export default function NewRequest(){
       window.scrollTo({top:0,behavior:"smooth"}); return;
     }
     // ⛔ Clear Advance: ทุกบรรทัดที่มีเงิน ต้องเลือก Cost Code + มีอย่างน้อย 1 บรรทัด
-    if(isAdvance){
+    if(useLines){
       const paid=advLines.filter(l=>nAmt(l.amount)>0);
-      if(!paid.length){ setErr("Clear Advance ต้องมีอย่างน้อย 1 รายการที่มีจำนวนเงิน"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      if(!paid.length){ setErr("ต้องมีอย่างน้อย 1 รายการที่มีจำนวนเงิน"); window.scrollTo({top:0,behavior:"smooth"}); return; }
       // รายการค่าใช้จ่าย (ไม่ใช่เงินคืน) ต้องเลือก Cost Code
-      if(paid.filter(l=>!l.refund).some(l=>!l.cost)){ setErr("ทุกบรรทัด ‘ค่าใช้จ่าย’ ที่มีจำนวนเงิน ต้องเลือก Cost Code (ยกเว้นรายการเงินคืน)"); window.scrollTo({top:0,behavior:"smooth"}); return; }
-      // รายการเงินคืน ต้องแนบสลิปโอนเงิน
-      if(paid.filter(l=>l.refund).some(l=>!l.slip)){ setErr("รายการ ‘เงินคืน Advance’ ต้องแนบสลิปโอนเงิน (📎) ทุกบรรทัด"); window.scrollTo({top:0,behavior:"smooth"}); return; }
-      // ⛔ งบราย cost code ไม่พอ → ไม่ให้ส่ง ต้องเริ่มกระบวนการใหม่ทั้งหมด
+      if(paid.filter(l=>!l.refund).some(l=>!l.cost)){ setErr("ทุกบรรทัดที่มีจำนวนเงิน ต้องเลือก Cost Code (ยกเว้นรายการเงินคืน)"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      // รายการเงินคืน ต้องแนบสลิปโอนเงิน (เฉพาะ Advance)
+      if(isAdvance && paid.filter(l=>l.refund).some(l=>!l.slip)){ setErr("รายการ ‘เงินคืน Advance’ ต้องแนบสลิปโอนเงิน (📎) ทุกบรรทัด"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      // ⛔ งบราย cost code ไม่พอ → ไม่ให้ส่ง
       if(advOver){
         const detail=advOverList.map(([cid,sum])=>{ const c=codes.find(x=>x.id===cid); const cc=ccMap[cid];
           return (c?.code||"?")+" (เบิก "+fmtMoney(sum)+" · เหลือ "+fmtMoney(cc.remaining)+")"; }).join(" · ");
-        setErr("งบไม่พอราย Cost Code — ต้องเริ่มกระบวนการใหม่ทั้งหมด: "+detail);
+        setErr("งบไม่พอราย Cost Code — "+(isAdvance?"ต้องเริ่มกระบวนการใหม่ทั้งหมด":"แก้ยอดให้อยู่ในงบก่อนส่ง")+": "+detail);
         window.scrollTo({top:0,behavior:"smooth"}); return;
       }
     }
@@ -328,7 +338,8 @@ export default function NewRequest(){
       window.scrollTo({top:0,behavior:"smooth"}); return;
     }
     setBusy(true);
-    const { data:sess }=await supabase.auth.getSession(); const uid=sess.session.user.id;
+    const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
+    if(!uid){ setErr("เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่แล้วส่งอีกครั้ง"); setBusy(false); return; }
     const sla=new Date(Date.now()+(Number(sel?.default_sla_hours||24))*3600e3).toISOString();
     const { data:req, error }=await supabase.from("hub_requests").insert({
       requester_id:uid, request_type_id:form.type, title:form.title, detail:form.detail,
@@ -337,26 +348,31 @@ export default function NewRequest(){
       form_data: isTravel ? {...fd, rate:RATE_KM, total_km:travelKm,
         trips: trips.filter(t=>tripKm(t)>0).map((t,i)=>({no:i+1,date:t.date,vtype:t.vtype,dest:t.dest,
           odo_out:Number(t.odoOut),odo_in:Number(t.odoIn),km:tripKm(t),maps_km:Number(t.mapsKm),
-          diff:tripDiff(t),over:tripOver(t),reason:t.reason||"",amount:tripKm(t)*RATE_KM})) } : (ocr ? {...fd, _ocr:{...ocr, confirmed_total:amt, at:new Date().toISOString()}} : fd)
+          diff:tripDiff(t),over:tripOver(t),reason:t.reason||"",amount:tripKm(t)*RATE_KM})) }
+          : { ...fd,
+              ...(ocr ? { _ocr:{...ocr, confirmed_total:amt, at:new Date().toISOString()} } : {}),
+              ...(fxOn && fxThb>0 ? { _fx:{ currency:fx.cur||null, fx_amount:Number(fx.amt)||null, rate:Number(fx.rate)||null, thb:fxThb } } : {}) }
     }).select().single();
     if(error){ setErr(error.message); setBusy(false); return; }
-    if(needExpense && (amt>0 || (isAdvance && advRefund>0))){
+    if(needExpense && (amt>0 || (useLines && advRefund>0))){
       // 1 entry รวม (amount = ค่าใช้จ่ายจริง ไม่รวมเงินคืน) คุมอนุมัติ+งบ · สถานะอนุมัติกำหนดโดย trigger DB
-      const { data:entry }=await supabase.from("hub_expense_entries").insert({
+      const { data:entry, error:eerr }=await supabase.from("hub_expense_entries").insert({
         request_id:req.id, project_id:form.project||null,
-        cost_code_id: isAdvance ? null : (form.cost||null),
+        cost_code_id: useLines ? null : (form.cost||null),
         amount: amt,
         expense_type: etype||null,
         out_of_budget: !!overBudget,
         ob_kind: overBudget ? (etype==="opex"?"transfer":"excom") : null
       }).select("id").single();
+      if(eerr){ setErr("บันทึกคำขอแล้ว แต่บันทึกรายการค่าใช้จ่ายไม่สำเร็จ ("+eerr.message+") — แจ้งแอดมินก่อนส่งซ้ำ"); setBusy(false); return; }
       // breakdown รายบรรทัด (Clear Advance)
-      if(isAdvance && entry){
+      if(useLines && entry){
         const lines=advLines
           .filter(l=>nAmt(l.amount)>0)
           .map(l=>({ request_id:req.id, entry_id:entry.id, cost_code_id:l.refund?null:(l.cost||null),
                      amount:nAmt(l.amount), description:l.note||null, is_refund:!!l.refund }));
-        if(lines.length) await supabase.from("hub_expense_lines").insert(lines);
+        if(lines.length){ const { error:lerr }=await supabase.from("hub_expense_lines").insert(lines);
+          if(lerr){ setErr("บันทึกคำขอแล้ว แต่บันทึกรายการแยก Cost Code ไม่สำเร็จ ("+lerr.message+") — แจ้งแอดมิน"); setBusy(false); return; } }
       }
     }
     // งบไม่พอ + Opex → บันทึกการโยกงบ (ปรับตัวเลขงบจริง)
@@ -497,9 +513,12 @@ export default function NewRequest(){
               <div className="muted" style={{fontSize:11,marginTop:4}}>ระยะ = ไมล์กลับ − ไมล์ไป · เงิน = ระยะ × {RATE_KM} บาท · <b>ต้องแนบรูปเลขไมล์ 2 รูปทุกเที่ยว: ขาไป (ก่อนออก) + ขากลับ (เมื่อถึง)</b></div>
             </div>
           </>
-          ) : isAdvance ? (
+          ) : useLines ? (
           <div className="field">
-            <label>รายการค่าใช้จ่าย (Clear Advance — ใส่ได้หลาย Cost) *</label>
+            {!isAdvance&&<label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontWeight:400,color:"#20232A",marginBottom:8}}>
+              <input type="checkbox" checked={multiCost} onChange={e=>setMultiCost(e.target.checked)} style={{width:"auto",margin:0}}/>
+              แยกหลาย Cost Code (ค่าอุปกรณ์ + ค่าเดินทาง + อื่นๆ ในใบเดียว)</label>}
+            <label>{isAdvance?"รายการค่าใช้จ่าย (Clear Advance — ใส่ได้หลาย Cost) *":"รายการค่าใช้จ่าย (แยกหลาย Cost Code) *"}</label>
             <div style={{marginBottom:6}}>
               <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBillsAdvance} style={{borderColor:"#2453A8",color:"#2453A8"}}>
                 {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดหลายบิล (ไฟล์ใบปะหน้า+บิล → แตกหลายบรรทัดให้)"}
@@ -542,7 +561,7 @@ export default function NewRequest(){
                 <tr style={{borderTop:"2px solid #DDE6E0",background:"#FAFDFB"}}>
                   <td colSpan="2" style={{padding:"6px 8px"}}>
                     <button type="button" onClick={addLine} className="btn sm sec" style={{fontSize:12,marginRight:6}}>+ เพิ่มบรรทัดค่าใช้จ่าย</button>
-                    <button type="button" onClick={addRefund} className="btn sm sec" style={{fontSize:12,borderColor:"#B26A00",color:"#B26A00"}}>+ เพิ่มรายการเงินคืน</button>
+                    {isAdvance&&<button type="button" onClick={addRefund} className="btn sm sec" style={{fontSize:12,borderColor:"#B26A00",color:"#B26A00"}}>+ เพิ่มรายการเงินคืน</button>}
                   </td>
                   <td className="right" style={{fontWeight:700,color:advOver?"#B03A2E":"#2E7D5B"}}>ค่าใช้จ่าย {fmtMoney(advExpense)}</td><td></td>
                 </tr>
@@ -565,21 +584,47 @@ export default function NewRequest(){
             </div>}
           </div>
           ) : (
+          <>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontWeight:400,color:"#20232A",marginBottom:8,fontSize:13}}>
+            <input type="checkbox" checked={multiCost} onChange={e=>setMultiCost(e.target.checked)} style={{width:"auto",margin:0}}/>
+            แยกหลาย Cost Code (เช่น ค่าอุปกรณ์ + ค่าเดินทาง + อื่นๆ ในใบเดียว)
+          </label>
           <div className="row2">
             <div className="field"><label>Cost Code (ERP)</label>
               <Combobox options={codes.map(c=>({value:c.id,label:c.code+" · "+c.name,sub:c.name}))}
                 value={form.cost} onChange={v=>up("cost",v)}
                 placeholder="🔎 พิมพ์รหัส/ชื่อ cost code" emptyLabel="— เลือก —"
                 searchPlaceholder="🔎 พิมพ์รหัส/ชื่อ cost code"/></div>
-            <div className="field"><label>จำนวนเงิน (บาท)</label>
-              <input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0"
-                style={overBudget?{borderColor:"#B03A2E",boxShadow:"0 0 0 3px rgba(176,58,46,.12)"}:undefined}/>
+            <div className="field"><label>จำนวนเงิน (บาท){fxOn&&fxThb>0&&<span style={{color:"#2E7D5B",fontWeight:400}}> · คิดจากอัตราแลกเปลี่ยนแล้ว</span>}</label>
+              <input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0" readOnly={fxOn&&fxThb>0}
+                style={overBudget?{borderColor:"#B03A2E",boxShadow:"0 0 0 3px rgba(176,58,46,.12)"}:(fxOn&&fxThb>0?{background:"#F0F9F3"}:undefined)}/>
               {overBudget&&<div style={{fontSize:11.5,color:"#B03A2E",fontWeight:700,marginTop:4}}>
                 🚫 เกินงบคงเหลือ {fmtMoney(amt-Number(bud.left))}</div>}
             </div>
           </div>
+          <div style={{marginTop:6}}>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontWeight:400,color:"#20232A",fontSize:12.5}}>
+              <input type="checkbox" checked={fxOn} onChange={e=>setFxOn(e.target.checked)} style={{width:"auto",margin:0}}/>
+              บิลเป็นสกุลต่างประเทศ — คิดอัตราแลกเปลี่ยนเป็นบาทอัตโนมัติ
+            </label>
+            {fxOn&&<div style={{marginTop:6,background:"#FFF9F0",border:"1px solid #EBD9AE",borderRadius:8,padding:"10px 12px"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1.3fr 1.3fr",gap:8}}>
+                <div><label style={{fontSize:11.5,color:"#5A4A20"}}>สกุลเงิน</label>
+                  <input value={fx.cur} onChange={e=>setFx(v=>({...v,cur:e.target.value.toUpperCase()}))} placeholder="USD" style={{width:"100%",textTransform:"uppercase"}}/></div>
+                <div><label style={{fontSize:11.5,color:"#5A4A20"}}>ยอดสกุลต่างประเทศ</label>
+                  <input type="number" value={fx.amt} onChange={e=>setFx(v=>({...v,amt:e.target.value}))} placeholder="0.00" style={{width:"100%",textAlign:"right"}}/></div>
+                <div><label style={{fontSize:11.5,color:"#5A4A20"}}>อัตราแลกเปลี่ยน (บาท/หน่วย)</label>
+                  <input type="number" value={fx.rate} onChange={e=>setFx(v=>({...v,rate:e.target.value}))} placeholder="เช่น 34.50" style={{width:"100%",textAlign:"right",...(!(Number(fx.rate)>0)&&Number(fx.amt)>0?{borderColor:"#B26A00"}:{})}}/></div>
+              </div>
+              <div style={{marginTop:8,fontSize:13,fontWeight:800,color:fxThb>0?"#2E7D5B":"#8A5A00"}}>
+                {fxThb>0 ? "= "+fmtMoney(fxThb)+" บาท  →  ใส่ในช่องจำนวนเงินให้แล้ว ✓" : "กรอกยอดสกุลต่างประเทศ + อัตราแลกเปลี่ยน เพื่อคิดเป็นบาท"}
+              </div>
+              <div className="muted" style={{fontSize:10.5,marginTop:2}}>ระบบตัดงบด้วย "ยอดบาท" ที่คำนวณได้ · โปรดระบุอัตราแลกเปลี่ยนตามที่ตกลง (เช่น เรตซื้อธนาคาร ณ วันเปิด PR)</div>
+            </div>}
+          </div>
+          </>
           )}
-          {needExpense&&!isTravel&&!isAdvance&&(<div style={{marginTop:8}}>
+          {needExpense&&!isTravel&&!useLines&&(<div style={{marginTop:8}}>
             <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBill}
               style={{borderColor:"#2453A8",color:"#2453A8"}}>
               {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดข้อมูลจากบิล (รูป/PDF)"}
@@ -595,7 +640,7 @@ export default function NewRequest(){
               {ocr._foreign
                 ? <div style={{marginTop:6,background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:6,padding:"7px 10px"}}>
                     <div style={{fontSize:12,color:"#B03A2E",fontWeight:800}}>⛔ บิลนี้เป็นสกุล {ocr._fxc||ocr.fx_currency||"ต่างประเทศ"} {ocr.fx_amount!=null?fmtMoney(ocr.fx_amount):""} — ไม่มียอดเงินบาท / ยังไม่ระบุอัตราแลกเปลี่ยน</div>
-                    <div style={{fontSize:11,color:"#7A3B34",marginTop:2}}>ระบบ<b>ไม่เติมช่อง “จำนวนเงิน (บาท)” ให้</b> — กรุณากรอกยอดบาทเอง (แปลงตามอัตราแลกเปลี่ยนที่ตกลง) ก่อนส่ง มิฉะนั้นจะตัดงบผิด</div>
+                    <div style={{fontSize:11,color:"#7A3B34",marginTop:2}}>ระบบเปิดช่อง <b>“อัตราแลกเปลี่ยน”</b> ด้านล่างให้แล้ว — กรอกเรต (บาท/หน่วย) ระบบจะคิดเป็นบาทและใส่ช่องจำนวนเงินให้อัตโนมัติ · <b>ห้ามใช้ยอดสกุลต่างประเทศเป็นบาทตรงๆ</b> จะตัดงบผิด</div>
                   </div>
                 : <div className="muted" style={{fontSize:10.5,marginTop:3}}>ระบบเติมช่อง "จำนวนเงิน" + แนบรูปบิลให้อัตโนมัติแล้ว · แก้ไขได้ถ้าอ่านไม่ตรง</div>}
             </div>}
@@ -664,15 +709,18 @@ export default function NewRequest(){
               : <div style={{marginTop:8,fontSize:12,color:"#B03A2E"}}>ยังขาด: {govMsg}</div>)}
           </div>)}
         </div>)}
-        {isEnt&&amt>0&&(amt>ENT_CEO_LIMIT
-          ? <div style={{margin:"10px 0",background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:8,padding:"10px 14px"}}>
-              <div style={{fontSize:13,color:"#B03A2E",fontWeight:800}}>⛔ ค่ารับรอง {fmtMoney(amt)} บาท (เกิน 10,000/ครั้ง) — ต้องได้รับอนุมัติจาก CEO ก่อน</div>
-              <div style={{fontSize:11.5,color:"#7A3B34",marginTop:3}}>แนบหลักฐานอนุมัติจาก CEO ในช่อง “หลักฐานอนุมัติค่ารับรอง” ด้านล่าง — ไม่แนบจะส่งคำขอไม่ได้ (ประกาศ AMR0X/2569)</div>
-            </div>
-          : <div style={{margin:"10px 0",background:"#FFF9F0",border:"1.5px solid #EBD9AE",borderRadius:8,padding:"10px 14px"}}>
-              <div style={{fontSize:13,color:"#8A5A00",fontWeight:800}}>📋 ค่ารับรอง {fmtMoney(amt)} บาท (≤10,000/ครั้ง) — ต้องได้รับอนุมัติจาก C-Level ของหน่วยงาน</div>
-              <div style={{fontSize:11.5,color:"#5A4A20",marginTop:3}}>แนบหลักฐานอนุมัติจาก C-Level ในช่อง “หลักฐานอนุมัติค่ารับรอง” ด้านล่าง — ไม่แนบจะส่งคำขอไม่ได้ (ประกาศ AMR0X/2569)</div>
-            </div>)}
+        {isEnt&&amt>0&&(()=>{
+          const lv = amt>ENT_CEO_LIMIT ? "ceo" : (amt>ENT_DIR_LIMIT ? "clevel" : "dir");
+          const cfg = lv==="ceo"
+            ? {bg:"#FFF6F6",bd:"#F0B7BC",fg:"#B03A2E",sub:"#7A3B34",icon:"⛔",who:"ประธานเจ้าหน้าที่บริหาร (CEO)",band:"เกิน 20,000"}
+            : lv==="clevel"
+            ? {bg:"#FFF9F0",bd:"#EBD9AE",fg:"#8A5A00",sub:"#5A4A20",icon:"📋",who:"C-Level ของหน่วยงาน",band:"3,001–20,000"}
+            : {bg:"#F1F7FF",bd:"#C2D8F5",fg:"#1F5FB0",sub:"#3A5A82",icon:"📋",who:"ผู้อำนวยการฝ่ายของหน่วยงาน",band:"ไม่เกิน 3,000"};
+          return <div style={{margin:"10px 0",background:cfg.bg,border:"1.5px solid "+cfg.bd,borderRadius:8,padding:"10px 14px"}}>
+            <div style={{fontSize:13,color:cfg.fg,fontWeight:800}}>{cfg.icon} ค่ารับรอง {fmtMoney(amt)} บาท/คน/ครั้ง ({cfg.band} บาท) — ต้องได้รับอนุมัติจาก {cfg.who}</div>
+            <div style={{fontSize:11.5,color:cfg.sub,marginTop:3}}>แนบหลักฐานอนุมัติในช่อง “หลักฐานอนุมัติค่ารับรอง” ด้านล่าง — ไม่แนบจะส่งคำขอไม่ได้ (ประกาศ AMR14/2569)</div>
+          </div>;
+        })()}
         {sel&&<DocSlots slots={sel.doc_slots} picked={docs} onChange={setDocs}
           extra={files} onExtra={setFiles} formData={fd}/>}
 
