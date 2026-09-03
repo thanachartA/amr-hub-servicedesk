@@ -49,6 +49,7 @@ export default function NewRequest(){
   const [excomAck,setExcomAck]=useState(false);
   const [advLines,setAdvLines]=useState([{cost:"",amount:"",note:"",refund:false,slip:false}]);  // Clear Advance: หลาย cost ใน 1 OF
   const [fxOn,setFxOn]=useState(false); const [fx,setFx]=useState({cur:"",amt:"",rate:""});  // อัตราแลกเปลี่ยน → คิดบาทอัตโนมัติ
+  const [multiCost,setMultiCost]=useState(false);  // OF: แยกหลาย Cost Code (ค่าอุปกรณ์/เดินทาง/อื่นๆ ใน 1 ใบ)
   const [ccMap,setCcMap]=useState({});   // งบเหลือราย cost code ของโครงการ (ใช้เช็ค Advance รายบรรทัด)
   const [trips,setTrips]=useState([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);  // ค่าเดินทางหลายเที่ยว
   const [ocr,setOcr]=useState(null); const [ocrBusy,setOcrBusy]=useState(false);   // ถอดข้อมูลจากบิล (AI)
@@ -83,6 +84,7 @@ export default function NewRequest(){
   const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
   // Advance / Clear Advance = 1 OF มีได้หลาย cost → ยอดรวมทั้งใบใช้เช็คงบ/อนุมัติ
   const isAdvance = !!needExpense && /advance/i.test(sel?.name||"");
+  const useLines = isAdvance || (multiCost && !!needExpense);  // ใช้ตารางหลาย cost code (Advance หรือ OF แยกหลาย cost)
   // ค่ารับรองลูกค้า (ประกาศ AMR0X/2569): ≤10,000 บาท/ครั้ง → C-Level · >10,000 → CEO
   const isEnt = /Client Entertainment/.test(fd?.doc_type||"");
   const ENT_CEO_LIMIT = 10000;
@@ -99,12 +101,12 @@ export default function NewRequest(){
   const advExpense = advLines.reduce((s,l)=>s+(l.refund?0:nAmt(l.amount)),0);  // ค่าใช้จ่ายจริง (มี cost code)
   const advRefund  = advLines.reduce((s,l)=>s+(l.refund?nAmt(l.amount):0),0);   // เงินคืน (ไม่มี cost code)
   const advTotal = advExpense;   // amt = เฉพาะค่าใช้จ่ายจริง (เงินคืนไม่ใช่ค่าใช้จ่าย/ไม่ตัดงบ)
-  const amt = isTravel ? travelTotal : (isAdvance ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0));
+  const amt = isTravel ? travelTotal : (useLines ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0));
   const overBudget = !skipBudget && bud?.has_budget && amt>0 && amt > Number(bud.left);
   // ── Advance: เช็คงบราย cost code รายบรรทัด (รวมยอดต่อ cost code แล้วเทียบงบเหลือ) ──
   const advByCost = {};
-  if(isAdvance && !skipBudget) advLines.forEach(l=>{ if(l.cost && !l.refund){ const a=nAmt(l.amount); advByCost[l.cost]=(advByCost[l.cost]||0)+a; } });
-  const advOverList = (isAdvance && !skipBudget)
+  if(useLines && !skipBudget) advLines.forEach(l=>{ if(l.cost && !l.refund){ const a=nAmt(l.amount); advByCost[l.cost]=(advByCost[l.cost]||0)+a; } });
+  const advOverList = (useLines && !skipBudget)
     ? Object.entries(advByCost).filter(([cid,sum])=>{ const cc=ccMap[cid]; return cc && cc.has_budget && sum > cc.remaining; })
     : [];
   const advOver = advOverList.length>0;
@@ -133,12 +135,14 @@ export default function NewRequest(){
       setMemoFile(null); setExcomFile(null); setExcomAck(false);
       setAdvLines([{cost:"",amount:"",note:"",refund:false,slip:false}]);
       setTrips([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);
-      setOcr(null); setFxOn(false); setFx({cur:"",amt:"",rate:""});
+      setOcr(null); setFxOn(false); setFx({cur:"",amt:"",rate:""}); setMultiCost(false);
       setLinks([]); setLU(""); setLL(""); }
   }
   // อัตราแลกเปลี่ยน: ยอดบาท = ยอดสกุลต่างประเทศ × เรต → เติมช่องจำนวนเงินอัตโนมัติ
   const fxThb = (Number(fx.amt)>0 && Number(fx.rate)>0) ? Math.round(Number(fx.amt)*Number(fx.rate)*100)/100 : 0;
   useEffect(()=>{ if(fxOn && fxThb>0) setForm(s=>({...s, amount:String(fxThb)})); }, [fxOn, fxThb]);
+  // OF แยกหลาย Cost Code: sync ยอดรวมจากตารางเข้าช่อง "จำนวนเงินรวม" (form_schema) กันบล็อกตอนส่ง
+  useEffect(()=>{ if(multiCost && !isAdvance) setFd(f=>({...f, amount:String(amt||"")})); }, [multiCost, isAdvance, amt]);
   // ── หลาย cost line (Clear Advance) ──
   const setLine=(i,k,v)=>setAdvLines(a=>a.map((l,idx)=>idx===i?{...l,[k]:v}:l));
   const addLine=()=>setAdvLines(a=>[...a,{cost:"",amount:"",note:"",refund:false,slip:false}]);
@@ -297,18 +301,18 @@ export default function NewRequest(){
       window.scrollTo({top:0,behavior:"smooth"}); return;
     }
     // ⛔ Clear Advance: ทุกบรรทัดที่มีเงิน ต้องเลือก Cost Code + มีอย่างน้อย 1 บรรทัด
-    if(isAdvance){
+    if(useLines){
       const paid=advLines.filter(l=>nAmt(l.amount)>0);
-      if(!paid.length){ setErr("Clear Advance ต้องมีอย่างน้อย 1 รายการที่มีจำนวนเงิน"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      if(!paid.length){ setErr("ต้องมีอย่างน้อย 1 รายการที่มีจำนวนเงิน"); window.scrollTo({top:0,behavior:"smooth"}); return; }
       // รายการค่าใช้จ่าย (ไม่ใช่เงินคืน) ต้องเลือก Cost Code
-      if(paid.filter(l=>!l.refund).some(l=>!l.cost)){ setErr("ทุกบรรทัด ‘ค่าใช้จ่าย’ ที่มีจำนวนเงิน ต้องเลือก Cost Code (ยกเว้นรายการเงินคืน)"); window.scrollTo({top:0,behavior:"smooth"}); return; }
-      // รายการเงินคืน ต้องแนบสลิปโอนเงิน
-      if(paid.filter(l=>l.refund).some(l=>!l.slip)){ setErr("รายการ ‘เงินคืน Advance’ ต้องแนบสลิปโอนเงิน (📎) ทุกบรรทัด"); window.scrollTo({top:0,behavior:"smooth"}); return; }
-      // ⛔ งบราย cost code ไม่พอ → ไม่ให้ส่ง ต้องเริ่มกระบวนการใหม่ทั้งหมด
+      if(paid.filter(l=>!l.refund).some(l=>!l.cost)){ setErr("ทุกบรรทัดที่มีจำนวนเงิน ต้องเลือก Cost Code (ยกเว้นรายการเงินคืน)"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      // รายการเงินคืน ต้องแนบสลิปโอนเงิน (เฉพาะ Advance)
+      if(isAdvance && paid.filter(l=>l.refund).some(l=>!l.slip)){ setErr("รายการ ‘เงินคืน Advance’ ต้องแนบสลิปโอนเงิน (📎) ทุกบรรทัด"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      // ⛔ งบราย cost code ไม่พอ → ไม่ให้ส่ง
       if(advOver){
         const detail=advOverList.map(([cid,sum])=>{ const c=codes.find(x=>x.id===cid); const cc=ccMap[cid];
           return (c?.code||"?")+" (เบิก "+fmtMoney(sum)+" · เหลือ "+fmtMoney(cc.remaining)+")"; }).join(" · ");
-        setErr("งบไม่พอราย Cost Code — ต้องเริ่มกระบวนการใหม่ทั้งหมด: "+detail);
+        setErr("งบไม่พอราย Cost Code — "+(isAdvance?"ต้องเริ่มกระบวนการใหม่ทั้งหมด":"แก้ยอดให้อยู่ในงบก่อนส่ง")+": "+detail);
         window.scrollTo({top:0,behavior:"smooth"}); return;
       }
     }
@@ -348,18 +352,18 @@ export default function NewRequest(){
               ...(fxOn && fxThb>0 ? { _fx:{ currency:fx.cur||null, fx_amount:Number(fx.amt)||null, rate:Number(fx.rate)||null, thb:fxThb } } : {}) }
     }).select().single();
     if(error){ setErr(error.message); setBusy(false); return; }
-    if(needExpense && (amt>0 || (isAdvance && advRefund>0))){
+    if(needExpense && (amt>0 || (useLines && advRefund>0))){
       // 1 entry รวม (amount = ค่าใช้จ่ายจริง ไม่รวมเงินคืน) คุมอนุมัติ+งบ · สถานะอนุมัติกำหนดโดย trigger DB
       const { data:entry }=await supabase.from("hub_expense_entries").insert({
         request_id:req.id, project_id:form.project||null,
-        cost_code_id: isAdvance ? null : (form.cost||null),
+        cost_code_id: useLines ? null : (form.cost||null),
         amount: amt,
         expense_type: etype||null,
         out_of_budget: !!overBudget,
         ob_kind: overBudget ? (etype==="opex"?"transfer":"excom") : null
       }).select("id").single();
       // breakdown รายบรรทัด (Clear Advance)
-      if(isAdvance && entry){
+      if(useLines && entry){
         const lines=advLines
           .filter(l=>nAmt(l.amount)>0)
           .map(l=>({ request_id:req.id, entry_id:entry.id, cost_code_id:l.refund?null:(l.cost||null),
@@ -505,9 +509,12 @@ export default function NewRequest(){
               <div className="muted" style={{fontSize:11,marginTop:4}}>ระยะ = ไมล์กลับ − ไมล์ไป · เงิน = ระยะ × {RATE_KM} บาท · <b>ต้องแนบรูปเลขไมล์ 2 รูปทุกเที่ยว: ขาไป (ก่อนออก) + ขากลับ (เมื่อถึง)</b></div>
             </div>
           </>
-          ) : isAdvance ? (
+          ) : useLines ? (
           <div className="field">
-            <label>รายการค่าใช้จ่าย (Clear Advance — ใส่ได้หลาย Cost) *</label>
+            {!isAdvance&&<label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontWeight:400,color:"#20232A",marginBottom:8}}>
+              <input type="checkbox" checked={multiCost} onChange={e=>setMultiCost(e.target.checked)} style={{width:"auto",margin:0}}/>
+              แยกหลาย Cost Code (ค่าอุปกรณ์ + ค่าเดินทาง + อื่นๆ ในใบเดียว)</label>}
+            <label>{isAdvance?"รายการค่าใช้จ่าย (Clear Advance — ใส่ได้หลาย Cost) *":"รายการค่าใช้จ่าย (แยกหลาย Cost Code) *"}</label>
             <div style={{marginBottom:6}}>
               <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBillsAdvance} style={{borderColor:"#2453A8",color:"#2453A8"}}>
                 {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดหลายบิล (ไฟล์ใบปะหน้า+บิล → แตกหลายบรรทัดให้)"}
@@ -550,7 +557,7 @@ export default function NewRequest(){
                 <tr style={{borderTop:"2px solid #DDE6E0",background:"#FAFDFB"}}>
                   <td colSpan="2" style={{padding:"6px 8px"}}>
                     <button type="button" onClick={addLine} className="btn sm sec" style={{fontSize:12,marginRight:6}}>+ เพิ่มบรรทัดค่าใช้จ่าย</button>
-                    <button type="button" onClick={addRefund} className="btn sm sec" style={{fontSize:12,borderColor:"#B26A00",color:"#B26A00"}}>+ เพิ่มรายการเงินคืน</button>
+                    {isAdvance&&<button type="button" onClick={addRefund} className="btn sm sec" style={{fontSize:12,borderColor:"#B26A00",color:"#B26A00"}}>+ เพิ่มรายการเงินคืน</button>}
                   </td>
                   <td className="right" style={{fontWeight:700,color:advOver?"#B03A2E":"#2E7D5B"}}>ค่าใช้จ่าย {fmtMoney(advExpense)}</td><td></td>
                 </tr>
@@ -574,6 +581,10 @@ export default function NewRequest(){
           </div>
           ) : (
           <>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontWeight:400,color:"#20232A",marginBottom:8,fontSize:13}}>
+            <input type="checkbox" checked={multiCost} onChange={e=>setMultiCost(e.target.checked)} style={{width:"auto",margin:0}}/>
+            แยกหลาย Cost Code (เช่น ค่าอุปกรณ์ + ค่าเดินทาง + อื่นๆ ในใบเดียว)
+          </label>
           <div className="row2">
             <div className="field"><label>Cost Code (ERP)</label>
               <Combobox options={codes.map(c=>({value:c.id,label:c.code+" · "+c.name,sub:c.name}))}
@@ -609,7 +620,7 @@ export default function NewRequest(){
           </div>
           </>
           )}
-          {needExpense&&!isTravel&&!isAdvance&&(<div style={{marginTop:8}}>
+          {needExpense&&!isTravel&&!useLines&&(<div style={{marginTop:8}}>
             <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBill}
               style={{borderColor:"#2453A8",color:"#2453A8"}}>
               {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดข้อมูลจากบิล (รูป/PDF)"}
