@@ -17,7 +17,7 @@ export default function Login(){
   async function msLogin(){ clr(); setBusy(true);
     const { error }=await supabase.auth.signInWithOAuth({
       provider:"azure",
-      options:{ scopes:"email openid profile", redirectTo: ORIGIN() }
+      options:{ scopes:"email openid profile", redirectTo: ORIGIN()+"/auth/callback" }
     });
     if(error){ setBusy(false); setErr("เข้าสู่ระบบด้วย Microsoft ไม่สำเร็จ: "+error.message); }
   }
