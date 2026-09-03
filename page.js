@@ -297,6 +297,24 @@ export default function RequestDetail(){
     const w=window.open("","_blank"); if(!w){ setMsg("เบราว์เซอร์บล็อกป๊อปอัป — อนุญาตป๊อปอัปแล้วลองใหม่"); return; }
     w.document.write(html); w.document.close();
   }
+  // ── Export ใบเบิก/เคลียร์เงินทดรองจ่าย เป็น Excel ตามแบบฟอร์มบริษัท ──
+  async function exportAdvanceXlsx(){
+    setMsg("กำลังสร้างไฟล์ Excel…");
+    const { data:sess }=await supabase.auth.getSession();
+    const token=sess?.session?.access_token;
+    if(!token){ setMsg("เซสชันหมดอายุ — เข้าสู่ระบบใหม่"); return; }
+    try{
+      const res=await fetch("/api/admin/export-advance",{ method:"POST",
+        headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+token },
+        body:JSON.stringify({ request_id:id }) });
+      if(!res.ok){ let m="สร้างไฟล์ไม่สำเร็จ"; try{ const j=await res.json(); m=j.error||m; }catch(e){} setMsg("⛔ "+m); return; }
+      const blob=await res.blob(); const cd=res.headers.get("Content-Disposition")||"";
+      let fname="advance.xlsx"; const mm=/filename\*=UTF-8''([^;]+)/.exec(cd); if(mm){ try{ fname=decodeURIComponent(mm[1]); }catch(e){} }
+      const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=fname;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      setMsg("ดาวน์โหลดไฟล์ Excel แล้ว ✓");
+    }catch(e){ setMsg("⛔ "+(e?.message||e)); }
+  }
   const now=new Date();
   const active=["assigned","in_progress","waiting","revising"].includes(r.status);
   const trips = Array.isArray(r.form_data?.trips) ? r.form_data.trips : null;
@@ -306,6 +324,8 @@ export default function RequestDetail(){
   const odoLabel=(k)=>{ const m=/^odo_(\d+)_(out|in)$/.exec(k||""); return m?("เที่ยว "+m[1]+" · "+(m[2]==="out"?"ขาไป":"ขากลับ")):"เลขไมล์"; };
   const canRate = r.status==="closed" && uid===r.requester_id;
   const isEntReq = /Client Entertainment/.test(r.form_data?.doc_type||"");
+  const isAdvReq = /advance/i.test(r.hub_request_types?.name||"");
+  const canExportAdv = ["owner","supervisor"].includes(role);
   return (<Shell title={"คำขอ "+(r.ticket_no||"")}>
     {msg&&<div className="ok">{msg}</div>}
     <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:18}}>
@@ -370,6 +390,14 @@ export default function RequestDetail(){
                 </div>
               </div>)}
         </div>
+
+        {isAdvReq&&canExportAdv&&(<div className="card" style={{background:"#F1F8F4",border:"1px solid #BFE2CC"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+            <h2 style={{margin:0}}>📊 ใบเบิก/เคลียร์เงินทดรองจ่าย (Excel)</h2>
+            <button className="btn sm" onClick={exportAdvanceXlsx}>⬇ Export Excel ตามแบบฟอร์ม</button>
+          </div>
+          <div className="muted" style={{fontSize:12,marginTop:6}}>สร้างไฟล์ Excel ตามแบบฟอร์มบริษัท (Advance Request / Clearing Form) เติมข้อมูลจากคำขอให้อัตโนมัติ — สำหรับ Owner / Supervisor</div>
+        </div>)}
 
         {isEntReq&&(<div className="card" style={{background:"#FFFBF4",border:"1px solid #EBD9AE"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
