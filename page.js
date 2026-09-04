@@ -325,7 +325,7 @@ export default function RequestDetail(){
   const canRate = r.status==="closed" && uid===r.requester_id;
   const isEntReq = /Client Entertainment/.test(r.form_data?.doc_type||"");
   const isAdvReq = /advance/i.test(r.hub_request_types?.name||"");
-  const canExportAdv = ["owner","supervisor"].includes(role);
+  const canExportAdv = staff; // ทีม GA (hub_team) ทุกคน export ได้
   return (<Shell title={"คำขอ "+(r.ticket_no||"")}>
     {msg&&<div className="ok">{msg}</div>}
     <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:18}}>
@@ -396,7 +396,7 @@ export default function RequestDetail(){
             <h2 style={{margin:0}}>📊 ใบเบิก/เคลียร์เงินทดรองจ่าย (Excel)</h2>
             <button className="btn sm" onClick={exportAdvanceXlsx}>⬇ Export Excel ตามแบบฟอร์ม</button>
           </div>
-          <div className="muted" style={{fontSize:12,marginTop:6}}>สร้างไฟล์ Excel ตามแบบฟอร์มบริษัท (Advance Request / Clearing Form) เติมข้อมูลจากคำขอให้อัตโนมัติ — สำหรับ Owner / Supervisor</div>
+          <div className="muted" style={{fontSize:12,marginTop:6}}>สร้างไฟล์ Excel ตามแบบฟอร์มบริษัท (Advance Request / Clearing Form) เติมข้อมูลจากคำขอให้อัตโนมัติ — สำหรับทีม GA ทุกคน</div>
         </div>)}
 
         {isEntReq&&(<div className="card" style={{background:"#FFFBF4",border:"1px solid #EBD9AE"}}>

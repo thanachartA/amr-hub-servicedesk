@@ -33,7 +33,7 @@ export async function POST(req){
   const caller = who && who.user;
   if(authErr || !caller) return Response.json({ error:"เซสชันหมดอายุ — เข้าสู่ระบบใหม่" }, { status:401 });
   const { data:me } = await admin.from("hub_team").select("hub_role").eq("user_id", caller.id).maybeSingle();
-  if(!me || !["owner","supervisor"].includes(me.hub_role)) return Response.json({ error:"เฉพาะ Owner / Supervisor เท่านั้น" }, { status:403 });
+  if(!me) return Response.json({ error:"เฉพาะทีม GA (Hub) เท่านั้นที่ export ได้" }, { status:403 });
 
   const body = await req.json().catch(()=>({}));
   const reqId = body.request_id;
