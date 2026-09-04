@@ -259,6 +259,62 @@ export default function RequestDetail(){
     const w=window.open("","_blank"); if(!w){ setMsg("เบราว์เซอร์บล็อกป๊อปอัป — อนุญาตป๊อปอัปแล้วลองใหม่"); return; }
     w.document.write(html); w.document.close();
   }
+  // ── ใบขอเบิกค่ารับรอง (AMR14/2569) — สร้างจากข้อมูลที่กรอกในระบบ ──
+  function printEntPDF(){
+    const fd=r.form_data||{};
+    const esc=(s)=>String(s==null?"":s).replace(/[&<>]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
+    const amount=Number(fd.amount)|| (exp[0]?Number(exp[0].amount):0) || 0;
+    const dateTH=new Date(fd.invoice_date||r.created_at).toLocaleDateString("th-TH",{day:"2-digit",month:"long",year:"numeric"});
+    const intoProject=!!r.project && !fd.ent_no_project;
+    const ocrItems=(fd._ocr&&Array.isArray(fd._ocr.items))?fd._ocr.items:[];
+    const items=ocrItems.length?ocrItems.map((it,i)=>({no:i+1,date:it.date||"",desc:it.name||it.description||"",amt:Number(it.amount)||0}))
+      :[{no:1,date:fd.invoice_date||"",desc:fd.expense_desc||fd.ent_detail||r.title||"",amt:amount}];
+    const total=items.reduce((s,it)=>s+(Number(it.amt)||0),0)||amount;
+    const filler=Array.from({length:Math.max(0,5-items.length)}).map((_,i)=>`<tr><td style="text-align:center">${items.length+i+1}</td><td></td><td></td><td></td></tr>`).join("");
+    const rows=items.map(it=>`<tr><td style="text-align:center">${it.no}</td><td style="text-align:center">${esc(it.date)}</td><td>${esc(it.desc)}</td><td style="text-align:right">${fmtMoney(it.amt)}</td></tr>`).join("")+filler;
+    const need=total>20000?"ceo":(total>3000?"clevel":"dir");
+    const box=(title,cap,on,name)=>`<td style="border:1px solid #999;padding:8px 6px;text-align:center;vertical-align:top;width:25%;${on?"background:#FFF3E0":""}"><div style="font-weight:700;font-size:11px">${title}</div><div style="font-size:10px;color:#666">${cap}</div><div style="height:44px"></div><div style="border-top:1px solid #333;margin:0 6px;padding-top:2px;font-size:11px">( ${esc(name||"")} )</div><div style="font-size:10px;color:#555">ตำแหน่ง ...............</div><div style="font-size:10px;color:#555">วันที่ ......./......./.......</div></td>`;
+    const chk=(on)=>on?"☑":"☐";
+    const html=`<!doctype html><html><head><meta charset="utf-8"><title>ใบขอเบิกค่ารับรอง ${esc(r.ticket_no)}</title><style>*{font-family:'TH Sarabun New','Sarabun',Tahoma,sans-serif;box-sizing:border-box}body{margin:0;padding:26px;color:#111;font-size:13px}h1{font-size:19px;text-align:center;margin:0 0 12px}table{width:100%;border-collapse:collapse}td,th{border:1px solid #999;padding:4px 6px;font-size:12px}.row{margin:3px 0}u{text-underline-offset:3px}@media print{button{display:none}}</style></head><body>
+<button onclick="window.print()" style="float:right;padding:6px 12px">🖨 พิมพ์ / บันทึก PDF</button>
+<div style="font-size:11px;color:#555">บริษัท เอเอ็มอาร์ เอเชีย จำกัด (มหาชน) · เลขที่คำขอ ${esc(r.ticket_no)} · ตามประกาศ AMR14/2569</div>
+<h1>ใบขอเบิกค่ารับรอง</h1>
+<div class="row" style="text-align:right">วันที่ <u>${dateTH}</u></div>
+<div class="row"><b>ชื่อผู้ขอเบิก</b> <u>${esc(r.requester&&r.requester.full_name)}</u> &nbsp; <b>ตำแหน่ง</b> <u>${esc(fd.requester_title||"")}</u></div>
+<div class="row"><b>รหัสแผนก</b> <u>${esc(r.department_code||"")}</u></div>
+<div class="row"><b>เบิกค่ารับรองเข้า</b></div>
+<div class="row" style="margin-left:14px">${chk(!intoProject)} แผนก &nbsp; รหัสแผนก <u>${esc(!intoProject?(r.department_code||""):"")}</u></div>
+<div class="row" style="margin-left:14px">${chk(intoProject)} โครงการ &nbsp; รหัสโครงการ <u>${esc(intoProject?(r.project.code||""):"")}</u> &nbsp; ชื่อโครงการ <u>${esc(intoProject?(r.project.name||""):"")}</u></div>
+<div class="row"><b>รับรองหน่วยงาน</b> <u>${esc(fd.ent_company||"")}</u></div>
+<div class="row"><b>ชื่อผู้เข้าร่วมการรับรอง</b> <u>${esc(fd.ent_person||"")}</u></div>
+<div class="row"><b>วัตถุประสงค์การเบิกค่ารับรอง</b> <u>${esc(fd.ent_purpose||"")}${fd.ent_detail?(" — "+esc(fd.ent_detail)):""}</u></div>
+<div class="row" style="font-weight:700;margin-top:8px">รายละเอียดค่ารับรอง</div>
+<table><thead><tr><th style="width:8%">ลำดับ</th><th style="width:20%">วัน เดือน ปี</th><th>รายละเอียด</th><th style="width:18%">จำนวนเงิน</th></tr></thead><tbody>${rows}<tr><td colspan="3" style="text-align:right;font-weight:700">รวม</td><td style="text-align:right;font-weight:700">${fmtMoney(total)}</td></tr></tbody></table>
+<div style="font-size:11px;color:#b03a2e;margin:3px 0 10px">(กรุณาแนบหลักฐานใบกำกับภาษี ใบเสร็จรับเงิน หรือหลักฐานการจ่ายเงิน สำหรับทุกรายการ)</div>
+<table><tbody><tr>${box("ผู้จัดทำ","",false,r.requester&&r.requester.full_name)}${box("ผู้อนุมัติ (ผอ.ฝ่าย)","กรณี ไม่เกิน 3,000 บาท",need==="dir","")}${box("ผู้อนุมัติ (C-Level)","กรณี ไม่เกิน 20,000 บาท",need==="clevel","")}${box("ผู้อนุมัติ (CEO)","กรณี เกิน 20,000 บาท",need==="ceo","")}</tr></tbody></table>
+<div style="font-size:10.5px;color:#666;margin-top:6px">* ช่องที่ไฮไลต์ = ระดับผู้อนุมัติที่ต้องลงนามตามวงเงิน ${fmtMoney(total)} บาท/คน/ครั้ง (ประกาศ AMR14/2569)</div>
+</body></html>`;
+    const w=window.open("","_blank"); if(!w){ setMsg("เบราว์เซอร์บล็อกป๊อปอัป — อนุญาตป๊อปอัปแล้วลองใหม่"); return; }
+    w.document.write(html); w.document.close();
+  }
+  // ── Export ใบเบิก/เคลียร์เงินทดรองจ่าย เป็น Excel ตามแบบฟอร์มบริษัท ──
+  async function exportAdvanceXlsx(){
+    setMsg("กำลังสร้างไฟล์ Excel…");
+    const { data:sess }=await supabase.auth.getSession();
+    const token=sess?.session?.access_token;
+    if(!token){ setMsg("เซสชันหมดอายุ — เข้าสู่ระบบใหม่"); return; }
+    try{
+      const res=await fetch("/api/admin/export-advance",{ method:"POST",
+        headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+token },
+        body:JSON.stringify({ request_id:id }) });
+      if(!res.ok){ let m="สร้างไฟล์ไม่สำเร็จ"; try{ const j=await res.json(); m=j.error||m; }catch(e){} setMsg("⛔ "+m); return; }
+      const blob=await res.blob(); const cd=res.headers.get("Content-Disposition")||"";
+      let fname="advance.xlsx"; const mm=/filename\*=UTF-8''([^;]+)/.exec(cd); if(mm){ try{ fname=decodeURIComponent(mm[1]); }catch(e){} }
+      const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=fname;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      setMsg("ดาวน์โหลดไฟล์ Excel แล้ว ✓");
+    }catch(e){ setMsg("⛔ "+(e?.message||e)); }
+  }
   const now=new Date();
   const active=["assigned","in_progress","waiting","revising"].includes(r.status);
   const trips = Array.isArray(r.form_data?.trips) ? r.form_data.trips : null;
@@ -267,6 +323,9 @@ export default function RequestDetail(){
   const odoPhotos = atts.filter(a=>String(a.slot_key||"").startsWith("odo_"));
   const odoLabel=(k)=>{ const m=/^odo_(\d+)_(out|in)$/.exec(k||""); return m?("เที่ยว "+m[1]+" · "+(m[2]==="out"?"ขาไป":"ขากลับ")):"เลขไมล์"; };
   const canRate = r.status==="closed" && uid===r.requester_id;
+  const isEntReq = /Client Entertainment/.test(r.form_data?.doc_type||"");
+  const isAdvReq = /advance/i.test(r.hub_request_types?.name||"");
+  const canExportAdv = staff; // ทีม GA (hub_team) ทุกคน export ได้
   return (<Shell title={"คำขอ "+(r.ticket_no||"")}>
     {msg&&<div className="ok">{msg}</div>}
     <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:18}}>
@@ -331,6 +390,22 @@ export default function RequestDetail(){
                 </div>
               </div>)}
         </div>
+
+        {isAdvReq&&canExportAdv&&(<div className="card" style={{background:"#F1F8F4",border:"1px solid #BFE2CC"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+            <h2 style={{margin:0}}>📊 ใบเบิก/เคลียร์เงินทดรองจ่าย (Excel)</h2>
+            <button className="btn sm" onClick={exportAdvanceXlsx}>⬇ Export Excel ตามแบบฟอร์ม</button>
+          </div>
+          <div className="muted" style={{fontSize:12,marginTop:6}}>สร้างไฟล์ Excel ตามแบบฟอร์มบริษัท (Advance Request / Clearing Form) เติมข้อมูลจากคำขอให้อัตโนมัติ — สำหรับทีม GA ทุกคน</div>
+        </div>)}
+
+        {isEntReq&&(<div className="card" style={{background:"#FFFBF4",border:"1px solid #EBD9AE"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+            <h2 style={{margin:0}}>🍽️ ใบขอเบิกค่ารับรอง</h2>
+            <button className="btn sm" onClick={printEntPDF}>🖨 สร้างใบขอเบิกค่ารับรอง (PDF)</button>
+          </div>
+          <div className="muted" style={{fontSize:12,marginTop:6}}>สร้างใบขอเบิกค่ารับรองตามแบบฟอร์มบริษัท (ประกาศ AMR14/2569) จากข้อมูลที่กรอกอัตโนมัติ — เปิดแล้วกดพิมพ์/บันทึกเป็น PDF เพื่อเสนอผู้อนุมัติตามวงเงิน</div>
+        </div>)}
 
         {trips&&(<div className="card">
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
