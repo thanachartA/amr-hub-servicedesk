@@ -1,710 +1,786 @@
 "use client";
-import { useEffect, useState, useCallback, Fragment } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useState, Fragment } from "react";
+import { useRouter } from "next/navigation";
 import Shell from "../../../components/Shell";
 import { supabase } from "../../../lib/supabaseClient";
-import { StatusBadge, fmtDate, fmtMoney, notify, notifyMany, uploadAttachments, openAttachment, deleteAttachment, deleteRequestDeep, signedUrls, isImage, fmtSize, fileIcon, isLink, openLink, addLink } from "../../../components/util";
-import DynForm, { DynView } from "../../../components/DynForm";
+import { notifyMany, uploadAttachments, fmtSize, fileIcon, missingDocs, fmtMoney, addLink, fetchAll } from "../../../components/util";
+import DynForm, { missingFields } from "../../../components/DynForm";
+import DocSlots from "../../../components/DocSlots";
+import Combobox from "../../../components/Combobox";
 
-const APV_TH={
-  not_required:"ไม่ต้องอนุมัติ", pending_supervisor:"⏳ รอ Supervisor", pending_owner:"⏳ รอ Owner",
-  approved:"✅ อนุมัติแล้ว", rejected:"❌ ไม่อนุมัติ",
+const THRESHOLD=100000;
+const CAT={
+  finance:{label:"💰 การเงิน & เบิกจ่าย",order:1},
+  procurement:{label:"🛒 จัดซื้อ & Vendor",order:2},
+  ga:{label:"🏢 ธุรการ & ยานพาหนะ",order:3},
+  hr:{label:"👥 การเปลี่ยนข้อมูลในระบบ ByteHR / การเบิกสวัสดิการอื่นๆ",order:4},
+  inventory:{label:"📦 สินค้า & ทรัพย์สิน",order:5},
+  project:{label:"📊 งานโครงการ",order:6},
+  quality:{label:"📋 เอกสาร & คุณภาพ",order:7},
 };
-const APV_STYLE={
-  pending_supervisor:{background:"#FFF8E6",color:"#8A5A00",borderColor:"#EBD9AE"},
-  pending_owner:{background:"#FDECEE",color:"#B03A2E",borderColor:"#F3C9CE"},
-  approved:{background:"#E4F3EA",color:"#2E7D5B",borderColor:"#B7DEC8"},
-  rejected:{background:"#F2F4F6",color:"#5A6672"},
-};
-
-export default function RequestDetail(){
-  const { id }=useParams();
-  const [r,setR]=useState(null); const [exp,setExp]=useState([]); const [expLines,setExpLines]=useState([]); const [log,setLog]=useState([]);
-  const [team,setTeam]=useState([]); const [uid,setUid]=useState(null); const [staff,setStaff]=useState(false); const [canManage,setCanManage]=useState(false); const [canAssign,setCanAssign]=useState(false);
-  const [types,setTypes]=useState([]); const [editType,setEditType]=useState(false); const [newType,setNewType]=useState(""); const [typeBusy,setTypeBusy]=useState(false);
-  const [assignee,setAssignee]=useState(""); const [msg,setMsg]=useState(null);
-  const [cs,setCs]=useState(0); const [cc,setCc]=useState("");
-  const [atts,setAtts]=useState([]); const [upBusy,setUpBusy]=useState(false); const [thumbs,setThumbs]=useState({});
-  const [linkUrl,setLinkUrl]=useState(""); const [linkLabel,setLinkLabel]=useState("");   // ลิงก์เอกสารภายนอก
-  // อนุมัติค่าใช้จ่าย 2 ชั้น
-  const [role,setRole]=useState(null); const [threshold,setThreshold]=useState(100000);
-  const [apvBusy,setApvBusy]=useState(null); const [expErr,setExpErr]=useState(null);
-  const [sigs,setSigs]=useState([]); const [sigBusy,setSigBusy]=useState(false);   // e-signature ผู้ตรวจ/อนุมัติ
-  // แก้ไขคำขอ (ผู้ขอ ตอน new)
-  const [editing,setEditing]=useState(false); const [editDraft,setEditDraft]=useState({detail:"",form_data:{},priority:"normal"});
-  const names=Object.fromEntries(team.filter(x=>x.profiles).map(x=>[x.profiles.id, x.profiles.full_name]));
-
-  async function decide(x, action){
-    setExpErr(null);
-    let reason=null;
-    if(action==="reject"){
-      reason=prompt("เหตุผลที่ไม่อนุมัติ (จะแจ้งกลับผู้ขอ):","");
-      if(reason===null) return;
-    } else {
-      const nxt = Number(x.amount)>threshold && x.approval_status==="pending_supervisor"
-        ? "จะส่งต่อให้ Owner อนุมัติชั้นสุดท้าย" : "จะอนุมัติทันที (จบ loop)";
-      if(!confirm("อนุมัติ "+fmtMoney(x.amount)+" บาท ?\n\n"+nxt)) return;
-    }
-    setApvBusy(x.id);
-    const { data, error }=await supabase.rpc("hub_expense_decide",
-      { p_entry:x.id, p_action:action, p_reason:reason });
-    setApvBusy(null);
-    if(error){ setExpErr(error.message); return; }
-    setMsg(data==="pending_owner" ? "อนุมัติชั้น Supervisor แล้ว — ส่งต่อ Owner อนุมัติชั้นสุดท้าย"
-        : data==="approved" ? "อนุมัติเรียบร้อย" : "บันทึกไม่อนุมัติแล้ว");
-    load();
-  }
-  async function doDeleteRequest(){
-    if(!confirm("⚠ ลบคำขอนี้ถาวร?\n\n"+(r?.ticket_no||"")+" · "+(r?.title||"")+
-      "\n\nจะลบไฟล์แนบทั้งหมด ค่าใช้จ่าย การโยกงบ และประวัติ — กู้คืนไม่ได้")) return;
-    if(!confirm("ยืนยันอีกครั้ง: ลบถาวรจริง ๆ ใช่ไหม?")) return;
-    setMsg("กำลังลบ…");
-    const err=await deleteRequestDeep(id);
-    if(err){ setMsg(null); alert("ลบไม่สำเร็จ: "+err); return; }
-    window.location.href="/requests";
-  }
-  async function addLinkNow(){
-    if(!linkUrl.trim()) return;
-    const { data:sess }=await supabase.auth.getSession();
-    const err=await addLink(id, sess.session.user.id, linkUrl, linkLabel);
-    if(err){ setMsg("เพิ่มลิงก์ไม่สำเร็จ: "+err); return; }
-    setLinkUrl(""); setLinkLabel(""); load();
-  }
-  async function markPosted(x){
-    setExpErr(null);
-    const on=!x.posted_to_erp;
-    if(!confirm(on
-      ? "ยืนยันว่าคีย์รายการนี้เข้า ERP แล้ว?\n\nยอดนี้จะไปนับจากฝั่ง ERP แทน (กันนับซ้ำในงบโครงการ)"
-      : "ยกเลิกสถานะ 'ลง ERP แล้ว' ?\n\nยอดนี้จะกลับมานับในงบฝั่ง Hub")) return;
-    setApvBusy(x.id);
-    const { error }=await supabase.from("hub_expense_entries").update({posted_to_erp:on}).eq("id",x.id);
-    setApvBusy(null);
-    if(error){ setExpErr(error.message); return; }
-    load();
-  }
-  const load=useCallback(async()=>{
-    const { data:req }=await supabase.from("hub_requests").select("*,hub_request_types(name,default_sla_hours,form_schema,doc_slots),requester:requester_id(full_name),assignee:assignee_id(full_name),suggested:suggested_assignee_id(full_name),project:project_id(code,name)").eq("id",id).single();
-    setR(req); setAssignee(req?.assignee_id||"");
-    const { data:e }=await supabase.from("hub_expense_entries").select("*,projects(code,name,budget_amount),hub_cost_codes(code,name)").eq("request_id",id);
-    setExp(e||[]);
-    const { data:xl }=await supabase.from("hub_expense_lines").select("*,hub_cost_codes(code,name)").eq("request_id",id).order("created_at",{ascending:true});
-    setExpLines(xl||[]);
-    const { data:l }=await supabase.from("hub_activity_log").select("*,actor:actor_id(full_name)").eq("request_id",id).order("created_at",{ascending:true});
-    setLog(l||[]);
-    const { data:at }=await supabase.from("hub_attachments").select("*,uploader:uploaded_by(full_name)").eq("request_id",id).order("created_at",{ascending:true});
-    setAtts(at||[]);
-    setThumbs(await signedUrls((at||[]).filter(a=>isImage(a.mime_type)).map(a=>a.file_path), 900));
-    const { data:sg }=await supabase.from("hub_signatures").select("*").eq("request_id",id);
-    setSigs(sg||[]);
-  },[id]);
+const CAT_OTHER={label:"อื่น ๆ",order:9};
+function groupTypes(types){
+  const g={};
+  types.forEach(t=>{ const k=CAT[t.category]?t.category:"_other"; (g[k]=g[k]||[]).push(t); });
+  return Object.entries(g)
+    .map(([k,items])=>({ key:k, meta:CAT[k]||CAT_OTHER, items:items.sort((a,b)=>(a.sort_order||100)-(b.sort_order||100)) }))
+    .sort((a,b)=>a.meta.order-b.meta.order);
+}
+export default function NewRequest(){
+  const router=useRouter();
+  const [types,setTypes]=useState([]); const [projects,setProjects]=useState([]); const [codes,setCodes]=useState([]);
+  const [depts,setDepts]=useState([]);          // แผนก (master) สำหรับจ่ายงานตามแผนก
+  const [form,setForm]=useState({type:"",title:"",detail:"",priority:"normal",due:"",project:"",cost:"",amount:"",department:""});
+  const [err,setErr]=useState(null); const [busy,setBusy]=useState(false);
+  const [files,setFiles]=useState([]);          // เอกสารอื่น ๆ (ไม่เข้าช่อง)
+  const [docs,setDocs]=useState({});            // { slot_key: [File,...] }
+  const [fd,setFd]=useState({});
+  const [links,setLinks]=useState([]);          // ลิงก์เอกสารภายนอก (ไฟล์ใหญ่)
+  const [lU,setLU]=useState(""); const [lL,setLL]=useState("");
+  const [bud,setBud]=useState(null);            // งบเหลือของโครงการที่เลือก
+  // Opex/Capex + การจัดการงบไม่พอ (governance)
+  const [etype,setEtype]=useState("");          // opex | capex
+  const [tScope,setTScope]=useState("in_dept"); // in_dept | cross_dept
+  const [tFrom,setTFrom]=useState("");          // โครงการต้นทางที่จะโยกงบมา
+  const [tAmt,setTAmt]=useState("");            // จำนวนเงินที่โยก
+  const [cfo,setCfo]=useState(false); const [ceo,setCeo]=useState(false);
+  const [memoFile,setMemoFile]=useState(null);  // MEMO โยกงบ (Opex)
+  const [excomFile,setExcomFile]=useState(null);// มติ Excom (Capex)
+  const [excomAck,setExcomAck]=useState(false);
+  const [advLines,setAdvLines]=useState([{cost:"",amount:"",note:"",refund:false,slip:false}]);  // Clear Advance: หลาย cost ใน 1 OF
+  const [fxOn,setFxOn]=useState(false); const [fx,setFx]=useState({cur:"",amt:"",rate:""});  // อัตราแลกเปลี่ยน → คิดบาทอัตโนมัติ
+  const [multiCost,setMultiCost]=useState(false);  // OF: แยกหลาย Cost Code (ค่าอุปกรณ์/เดินทาง/อื่นๆ ใน 1 ใบ)
+  const [ccMap,setCcMap]=useState({});   // งบเหลือราย cost code ของโครงการ (ใช้เช็ค Advance รายบรรทัด)
+  const [trips,setTrips]=useState([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);  // ค่าเดินทางหลายเที่ยว
+  const [ocr,setOcr]=useState(null); const [ocrBusy,setOcrBusy]=useState(false);   // ถอดข้อมูลจากบิล (AI)
   useEffect(()=>{ (async()=>{
-    const { data:sess }=await supabase.auth.getSession(); const u=sess.session.user.id; setUid(u);
-    const { data:t }=await supabase.from("hub_team").select("hub_role,profiles:user_id(id,full_name)"); setTeam(t||[]);
-    setStaff((t||[]).some(x=>x.profiles?.id===u));
-    setCanManage((t||[]).some(x=>x.profiles?.id===u && ["owner","supervisor"].includes(x.hub_role)));
-    setCanAssign((t||[]).some(x=>x.profiles?.id===u && ["owner","lead","supervisor"].includes(x.hub_role)));
-    setRole((t||[]).find(x=>x.profiles?.id===u)?.hub_role || null);
-    const { data:s }=await supabase.from("hub_settings").select("value").eq("key","expense_approval_threshold").maybeSingle();
-    if(s?.value!=null) setThreshold(Number(s.value)||100000);
-    const { data:tp }=await supabase.from("hub_request_types").select("id,name,category,sort_order").eq("is_active",true).order("category").order("sort_order");
-    setTypes(tp||[]);
-    load();
-  })(); },[id]);
-  async function saveType(){
-    if(!newType || newType===r.request_type_id){ setEditType(false); return; }
-    setTypeBusy(true);
-    const { error }=await supabase.from("hub_requests").update({request_type_id:newType}).eq("id",id);
-    if(error){ setMsg("แก้ประเภทงานไม่สำเร็จ: "+error.message); setTypeBusy(false); return; }
-    await supabase.from("hub_activity_log").insert({request_id:id,actor_id:uid,action:"เปลี่ยนประเภทงาน",note:(types.find(t=>t.id===newType)?.name)||""});
-    setTypeBusy(false); setEditType(false); setMsg("เปลี่ยนประเภทงานแล้ว"); load();
-  }
-  if(!r) return <Shell title="คำขอ"><div className="muted">กำลังโหลด…</div></Shell>;
-  // เช็คลิสต์เอกสารตามประเภทงาน
-  const slots = Array.isArray(r.hub_request_types?.doc_slots) ? r.hub_request_types.doc_slots : [];
-  const bySlot = {};
-  atts.forEach(a=>{ if(a.slot_key){ (bySlot[a.slot_key]=bySlot[a.slot_key]||[]).push(a); } });
-  const noSlot = atts.filter(a=>!a.slot_key);
-  const slotLabel = { budget_memo:"MEMO โยกงบ (งบไม่พอ)", excom_approval:"มติอนุมัติ Excom (ซื้อนอกงบ)", result:"ผลงาน (ส่งตรวจ)",
-    ...Object.fromEntries(slots.map(s=>[s.key,s.label])) };
-  const leadIds=team.filter(x=>["owner","lead","supervisor"].includes(x.hub_role)).map(x=>x.profiles?.id).filter(Boolean);
-  const link="/requests/"+id;
-  const tk=r.ticket_no||""; const ttl=r.title||"";
-  const isAssignee = uid===r.assignee_id;
-  async function act(action,changes,note){
-    const from=r.status;
-    await supabase.from("hub_requests").update(changes).eq("id",id);
-    await supabase.from("hub_activity_log").insert({request_id:id,actor_id:uid,action,from_status:from,to_status:changes.status||from,note:note||null});
-    setMsg("อัปเดตแล้ว"); load();
-  }
-  async function assignTo(target,note){
-    if(!target) return;
-    await act("assign",{assignee_id:target,status:"assigned",assigned_at:new Date().toISOString()},note||"มอบหมายงาน");
-    supabase.from("hub_assignments").insert({request_id:id,assignee_id:target,assigned_by:uid,is_current:true});
-    notify(target,"ได้รับมอบหมายงานใหม่",tk+" · "+ttl,link,id);
-  }
-  async function doAssign(){ await assignTo(assignee); }
-  async function doAssignSuggested(){ await assignTo(r.suggested_assignee_id,"มอบหมายตามคำแนะนำระบบ"); }
-  // ยกเลิกมอบหมาย → กลับเป็น 'new' เพื่อให้ผู้ขอกลับมาแก้ไขได้
-  async function doUnassign(){
-    if(!confirm("ยกเลิกการมอบหมายงานนี้?\n\nงานจะกลับเป็น \"ใหม่\" และผู้ขอจะกลับมาแก้ไข/เพิ่มเอกสารได้อีกครั้ง")) return;
-    const prevAssignee=r.assignee_id;
-    await act("unassign",{assignee_id:null,status:"new",assigned_at:null,started_at:null},"ยกเลิกมอบหมาย — เปิดให้ผู้ขอแก้ไข");
-    await supabase.from("hub_assignments").update({is_current:false}).eq("request_id",id);
-    setAssignee("");
-    if(prevAssignee) notify(prevAssignee,"งานถูกยกเลิกการมอบหมาย",tk+" · "+ttl,link,id);
-    notify(r.requester_id,"เปิดให้แก้ไขคำขอได้แล้ว",tk+" · "+ttl+" — หัวหน้ายกเลิกการมอบหมายเพื่อให้คุณแก้ไข",link,id);
-  }
-  async function doStart(){ const ch={status:"in_progress"}; if(!r.started_at) ch.started_at=new Date().toISOString(); await act("start",ch); }
-  async function doWaiting(){
-    const note=prompt("รอข้อมูลอะไร? (แจ้งให้ผู้ขอทราบว่าต้องส่งอะไรเพิ่ม):","");
-    if(note===null) return;
-    if(!note.trim()){ setMsg("กรุณาระบุว่ารอข้อมูลอะไร"); return; }
-    await act("waiting",{status:"waiting",waiting_note:note.trim()},"รอข้อมูล: "+note.trim());
-    notify(r.requester_id,"งานของคุณรอข้อมูลเพิ่มเติม",tk+" · "+note.trim(),link,id);
-  }
-  async function doSubmit(){
-    // ⛔ ต้องแนบไฟล์ผลงาน (PDF) ก่อนส่งตรวจ
-    const resultFiles=atts.filter(a=>a.slot_key==="result" || (a.mime_type||"").includes("pdf"));
-    if(resultFiles.length===0){
-      setMsg("⛔ ต้องแนบไฟล์ผลงาน (PDF เช่น หน้า OF / Billing) ก่อนส่งตรวจ — กด \"+ แนบผลงาน (PDF)\" ด้านล่าง");
-      window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"});
-      return;
+    const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
+    const [t,p,c,d,me]=await Promise.all([
+      supabase.from("hub_request_types").select("*").eq("is_active",true).order("sort_order"),
+      // ⚠️ PostgREST cap 1000 แถว → ต้อง paginate ให้เห็นโครงการครบทุกตัวใน dropdown
+      fetchAll("projects","id,code,name,budget_amount",b=>b.order("code",{ascending:true})),
+      supabase.from("hub_cost_codes").select("*").eq("is_active",true).order("code"),
+      supabase.from("hub_departments").select("code,name").eq("is_active",true).order("code"),
+      supabase.from("profiles").select("department").eq("id",uid).maybeSingle()]);
+    setTypes(t.data||[]); setProjects(p||[]); setCodes(c.data||[]); setDepts(d.data||[]);
+    // default แผนก = แผนกของผู้ขอ (จับคู่ชื่อ/รหัสกับ master) — เปลี่ยนได้
+    const pd=me.data?.department;
+    if(pd){ const hit=(d.data||[]).find(x=>String(x.name).toLowerCase()===pd.toLowerCase()||String(x.code).toLowerCase()===pd.toLowerCase());
+      if(hit) setForm(f=>({...f,department:hit.code})); }
+  })(); },[]);
+  // โหลดงบคงเหลือ "ราย cost code" เมื่อเลือกโครงการ + cost code (ฐานต้นทุนจัดซื้อ ตรง ERP)
+  useEffect(()=>{ (async()=>{
+    if(!form.project || !form.cost){ setBud(null); return; }
+    const { data }=await supabase.rpc("hub_costcode_budget_left",{ p_project:form.project, p_costcode:form.cost });
+    setBud(data||null);
+  })(); },[form.project,form.cost]);
+  // โหลดงบเหลือ "ทุก cost code" ในโครงการ → map ไว้เช็ค Advance รายบรรทัด
+  useEffect(()=>{ (async()=>{
+    if(!form.project){ setCcMap({}); return; }
+    const { data }=await supabase.rpc("hub_project_costcode_budgets",{ p_project:form.project });
+    const m={}; (data||[]).forEach(r=>{ m[r.cost_code_id]={remaining:Number(r.remaining),budget:Number(r.budget),has_budget:r.has_budget}; });
+    setCcMap(m);
+  })(); },[form.project]);
+  const sel=types.find(t=>t.id===form.type); const needExpense=sel?.incurs_expense;
+  // Advance / Clear Advance = 1 OF มีได้หลาย cost → ยอดรวมทั้งใบใช้เช็คงบ/อนุมัติ
+  const isAdvance = !!needExpense && /advance/i.test(sel?.name||"");
+  const useLines = isAdvance || (multiCost && !!needExpense);  // ใช้ตารางหลาย cost code (Advance หรือ OF แยกหลาย cost)
+  // ค่ารับรองลูกค้า (ประกาศ AMR14/2569): ≤3,000 → ผอ.ฝ่าย · ≤20,000 → C-Level · >20,000 → CEO (ต่อคน/ครั้ง)
+  const isEnt = /Client Entertainment/.test(fd?.doc_type||"");
+  const ENT_DIR_LIMIT = 3000, ENT_CEO_LIMIT = 20000;
+  // งานที่ "ตั้งเบิกตาม commit เดิม" (เช่น Billing วางบิลตาม WO ที่ตัดงบแล้ว) → ไม่เช็ค/ไม่ตัดงบซ้ำ
+  const skipBudget = !!sel?.skip_budget_check;
+  // ── ค่าเดินทางรถส่วนตัว: กม. = ไมล์กลับ−ไป · เงิน = กม.×7 · recheck vs Google Maps (ส่วนต่าง>10 = ⚠) ──
+  const isTravel = !!sel?.is_travel; const RATE_KM=7; const MAPS_TOL=10;
+  const tripKm=(t)=>{ const a=Number(t.odoOut),b=Number(t.odoIn); return (isFinite(a)&&isFinite(b)&&b>a)?(b-a):0; };
+  const tripDiff=(t)=>{ const m=Number(t.mapsKm); return (isFinite(m)&&m>0&&tripKm(t)>0)?(tripKm(t)-m):null; };
+  const tripOver=(t)=>{ const d=tripDiff(t); return d!==null && d>MAPS_TOL; };
+  const travelKm = trips.reduce((s,t)=>s+tripKm(t),0);
+  const travelTotal = travelKm*RATE_KM;
+  const nAmt=(x)=>Number(String(x).replace(/[,\s]/g,""))||0;
+  const advExpense = advLines.reduce((s,l)=>s+(l.refund?0:nAmt(l.amount)),0);  // ค่าใช้จ่ายจริง (มี cost code)
+  const advRefund  = advLines.reduce((s,l)=>s+(l.refund?nAmt(l.amount):0),0);   // เงินคืน (ไม่มี cost code)
+  const advTotal = advExpense;   // amt = เฉพาะค่าใช้จ่ายจริง (เงินคืนไม่ใช่ค่าใช้จ่าย/ไม่ตัดงบ)
+  const amt = isTravel ? travelTotal : (useLines ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0));
+  // โหมดหลาย cost code (Advance/OF แยก) เช็คงบราย "บรรทัด" (advOver) ไม่ใช่ยอดรวมกับ cost เดี่ยว → กัน bud ค้างจาก form.cost มาบล็อก
+  const overBudget = !useLines && !skipBudget && bud?.has_budget && amt>0 && amt > Number(bud.left);
+  // ── Advance: เช็คงบราย cost code รายบรรทัด (รวมยอดต่อ cost code แล้วเทียบงบเหลือ) ──
+  const advByCost = {};
+  if(useLines && !skipBudget) advLines.forEach(l=>{ if(l.cost && !l.refund){ const a=nAmt(l.amount); advByCost[l.cost]=(advByCost[l.cost]||0)+a; } });
+  const advOverList = (useLines && !skipBudget)
+    ? Object.entries(advByCost).filter(([cid,sum])=>{ const cc=ccMap[cid]; return cc && cc.has_budget && sum > cc.remaining; })
+    : [];
+  const advOver = advOverList.length>0;
+  const overCost = new Set(advOverList.map(([cid])=>cid));   // cost code ที่งบไม่พอ (ทำ input แดง)
+  // ── ตรวจความพร้อมของ governance เมื่องบไม่พอ ──
+  const shortfall = overBudget ? (amt - Number(bud.left)) : 0;
+  const tAmtNum = Number(String(tAmt).replace(/[,\s]/g,""))||0;
+  let govReady=true, govMsg="";
+  if(overBudget){
+    if(!etype){ govReady=false; govMsg="เลือกประเภทงบ (Opex/Capex) ก่อน"; }
+    else if(etype==="opex"){
+      if(!tFrom){ govReady=false; govMsg="เลือกโครงการต้นทางที่จะโยกงบมา"; }
+      else if(tAmtNum < shortfall){ govReady=false; govMsg="จำนวนเงินที่โยกต้องไม่น้อยกว่าส่วนที่ขาด "+fmtMoney(shortfall)+" บาท"; }
+      else if(!memoFile){ govReady=false; govMsg="แนบ MEMO การโยกงบ"; }
+      else if(!cfo){ govReady=false; govMsg="ยืนยันว่า MEMO ลงนามโดย CFO แล้ว"; }
+      else if(tScope==="cross_dept" && !ceo){ govReady=false; govMsg="โยกข้ามแผนก ต้องยืนยันว่าลงนามโดย CEO ด้วย"; }
+    } else if(etype==="capex"){
+      if(!excomFile){ govReady=false; govMsg="แนบเอกสารมติอนุมัติจาก Excom (ซื้อนอกงบ)"; }
+      else if(!excomAck){ govReady=false; govMsg="ยืนยันว่าได้รับอนุมัติจากที่ประชุม Excom แล้ว"; }
     }
-    await act("submit_review",{status:"review",done_at:new Date().toISOString()},"ส่งตรวจ");
-    notifyMany(leadIds,"มีงานรอตรวจ",tk+" · "+ttl,link,id);
   }
-  async function addResult(e){
-    const fs=[...(e.target.files||[])]; if(!fs.length) return;
-    setUpBusy(true); setMsg(null);
-    const errs=await uploadAttachments(id, uid, fs, "result");
-    setUpBusy(false); e.target.value="";
-    setMsg(errs.length ? ("แนบไม่สำเร็จ: "+errs.join(" · ")) : "แนบไฟล์ผลงานแล้ว");
-    load();
+  const blockSubmit = (needExpense && amt>0 && !etype) || (overBudget && !govReady) || advOver;
+  function up(k,v){ setForm(s=>({...s,[k]:v}));
+    if(k==="type"){ setDocs({}); setFiles([]); setFd({});
+      setEtype(""); setTScope("in_dept"); setTFrom(""); setTAmt(""); setCfo(false); setCeo(false);
+      setMemoFile(null); setExcomFile(null); setExcomAck(false);
+      setAdvLines([{cost:"",amount:"",note:"",refund:false,slip:false}]);
+      setTrips([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);
+      setOcr(null); setFxOn(false); setFx({cur:"",amt:"",rate:""}); setMultiCost(false);
+      setLinks([]); setLU(""); setLL(""); }
   }
-  async function doApprove(){
-    await act("approve",{status:"closed",reviewed_by:uid,reviewed_at:new Date().toISOString(),closed_at:new Date().toISOString()},"อนุมัติและปิดงาน");
-    notify(r.requester_id,"งานของคุณเสร็จแล้ว",tk+" · "+ttl,link,id);
-  }
-  async function doReject(){
-    const note=prompt("เหตุผลที่ตีกลับ (ให้ผู้รับผิดชอบแก้ไข):");
-    if(note===null) return;
-    await act("reject",{status:"in_progress",rework_count:(r.rework_count||0)+1,review_note:note},"ตีกลับแก้ไข: "+note);
-    notify(r.assignee_id,"งานถูกตีกลับให้แก้ไข",tk+" · "+(note||""),link,id);
-  }
-  // ผู้ขอแก้เนื้อหาคำขอได้เฉพาะตอนยัง 'new' · staff แก้ได้ตลอด
-  const canEditRequest = (staff) || (uid===r.requester_id && r.status==="new");
-  const canAttach = staff || (uid===r.requester_id && r.status==="new");
-  async function saveEdit(){
-    setMsg(null);
-    const { error }=await supabase.from("hub_requests")
-      .update({ detail:editDraft.detail, form_data:editDraft.form_data, priority:editDraft.priority })
-      .eq("id",id);
-    if(error){ setMsg("บันทึกไม่สำเร็จ: "+error.message); return; }
-    await supabase.from("hub_activity_log").insert({request_id:id,actor_id:uid,action:"edit",from_status:r.status,to_status:r.status,note:"แก้ไขข้อมูลคำขอ"});
-    setEditing(false); setMsg("บันทึกการแก้ไขแล้ว"); load();
-  }
-  async function addFiles(e){
-    const fs=[...(e.target.files||[])]; if(!fs.length) return;
-    setUpBusy(true); setMsg(null);
-    const errs=await uploadAttachments(id, uid, fs);
-    setUpBusy(false); e.target.value="";
-    setMsg(errs.length ? ("แนบไม่สำเร็จบางไฟล์: "+errs.join(" · ")) : "แนบไฟล์แล้ว");
-    load();
-  }
-  async function removeFile(a){
-    if(!confirm('ลบไฟล์ "'+a.file_name+'" ?')) return;
-    const err=await deleteAttachment(a);
-    setMsg(err ? ("ลบไม่สำเร็จ: "+err) : "ลบไฟล์แล้ว");
-    load();
-  }
-  async function submitCsat(){
-    if(!cs) return;
-    await supabase.from("hub_requests").update({csat_rating:cs,csat_comment:cc||null,csat_at:new Date().toISOString()}).eq("id",id);
-    setMsg("ขอบคุณสำหรับการประเมิน"); load();
-  }
-  // ── e-signature (ผู้ตรวจสอบ / ผู้อนุมัติ) ──
-  function pickImageDataUrl(){
-    return new Promise(res=>{
-      const inp=document.createElement("input"); inp.type="file"; inp.accept="image/*";
-      inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f){res(null);return;} const rd=new FileReader(); rd.onload=()=>res(rd.result); rd.onerror=()=>res(null); rd.readAsDataURL(f); };
-      inp.click();
+  // อัตราแลกเปลี่ยน: ยอดบาท = ยอดสกุลต่างประเทศ × เรต → เติมช่องจำนวนเงินอัตโนมัติ
+  const fxThb = (Number(fx.amt)>0 && Number(fx.rate)>0) ? Math.round(Number(fx.amt)*Number(fx.rate)*100)/100 : 0;
+  useEffect(()=>{ if(fxOn && fxThb>0) setForm(s=>({...s, amount:String(fxThb)})); }, [fxOn, fxThb]);
+  // OF แยกหลาย Cost Code: sync ยอดรวมจากตารางเข้าช่อง "จำนวนเงินรวม" (form_schema) กันบล็อกตอนส่ง
+  useEffect(()=>{ if(multiCost && !isAdvance) setFd(f=>({...f, amount:String(amt||"")})); }, [multiCost, isAdvance, amt]);
+  // ── หลาย cost line (Clear Advance) ──
+  const setLine=(i,k,v)=>setAdvLines(a=>a.map((l,idx)=>idx===i?{...l,[k]:v}:l));
+  const addLine=()=>setAdvLines(a=>[...a,{cost:"",amount:"",note:"",refund:false,slip:false}]);
+  const addRefund=()=>setAdvLines(a=>[...a,{cost:"",amount:"",note:"โอนคืนเงิน Advance ที่ใช้ไม่หมด",refund:true,slip:false}]);
+  const rmLine=(i)=>setAdvLines(a=>a.length>1?a.filter((_,idx)=>idx!==i):a);
+  // แนบสลิปโอนเงินให้บรรทัดเงินคืน (ไม่ผ่าน OCR)
+  function attachSlip(i,f){ if(!f) return; setFiles(v=>[...v,f]); setLine(i,"slip",true); }
+  // ── ค่าเดินทาง: จัดการเที่ยว ──
+  const setTrip=(i,k,v)=>setTrips(a=>a.map((t,idx)=>idx===i?{...t,[k]:v}:t));
+  const addTrip=()=>setTrips(a=>a.length<8?[...a,{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]:a);
+  const rmTrip=(i)=>setTrips(a=>a.length>1?a.filter((_,idx)=>idx!==i):a);
+  // ── ถอดข้อมูลจากบิลด้วย AI (Gemini) แล้วให้ผู้ใช้/แอดมินตรวจสอบ ──
+  const pickImg=()=>new Promise(r=>{ const i=document.createElement("input"); i.type="file"; i.accept="image/*,application/pdf,.pdf"; i.onchange=()=>r(i.files&&i.files[0]||null); i.click(); });
+  const toDataUrl=(f)=>new Promise((res,rej)=>{ const rd=new FileReader(); rd.onload=()=>res(rd.result); rd.onerror=rej; rd.readAsDataURL(f); });
+  // แม็พข้อมูลจากบิล → ช่องในฟอร์ม (ตาม label/ประเภทช่อง) เติมเฉพาะช่องที่ยังว่าง
+  function ocrToFd(d, schema, prev){
+    const out={...(prev||{})};
+    // สกุลต่างประเทศล้วน (ไม่มียอดบาท) → ห้ามเติมช่องจำนวนเงินอัตโนมัติ
+    const _cur=String(d.currency||"").toUpperCase();
+    const _foreignNoThb = ((d.fx_amount!=null && String(d.fx_currency||"").toUpperCase()!=="THB") || (_cur&&_cur!=="THB"))
+      && (d.total==null || (_cur&&_cur!=="THB") || Number(d.total)===Number(d.fx_amount));
+    (schema||[]).forEach(f=>{
+      const lab=((f.label||"")+" "+(f.key||""));
+      const cur=out[f.key]; const empty=(cur==null||cur==="");
+      if(f.type==="checkbox"){
+        if(d.vat!=null && Number(d.vat)>0 && /ใบกำกับภาษี|vat/i.test(lab) && !out[f.key]) out[f.key]=true;
+        return;
+      }
+      if(!empty || f.type==="select") return;
+      if(d.doc_no && (f.type==="text"||!f.type) && /เลขที่/.test(lab) && /บิล|ใบเสร็จ|invoice|กำกับ|เอกสาร/i.test(lab)) out[f.key]=String(d.doc_no);
+      else if(d.vendor && f.type!=="number" && /ร้าน|ผู้รับเงิน|บริษัท|ผู้ขาย|ผู้จำหน่าย|vendor/i.test(lab) && !/ประเภท|ที่อยู่|address/i.test(lab)) out[f.key]=String(d.vendor);
+      else if(d.description && (f.type==="textarea"||f.type==="text"||!f.type) && /รายละเอียด|รายการ|วัตถุประสงค์|detail|desc/i.test(lab)) out[f.key]=String(d.description);
+      else if(d.total!=null && !_foreignNoThb && f.type==="number" && /จำนวนเงิน|ยอด|รวม|amount/i.test(lab)) out[f.key]=Number(d.total);
+      else if(d.date && f.type==="date" && /วันที่/.test(lab) && !/รับเงิน|due|กำหนด|ครบ/i.test(lab)) out[f.key]=String(d.date);
     });
+    return out;
   }
-  async function sign(kind){
-    const meName = names[uid] || (team.find(x=>x.profiles?.id===uid)?.profiles?.full_name) || "";
-    const nm = prompt("พิมพ์ชื่อผู้ลงนาม ("+(kind==="review"?"ผู้ตรวจสอบ":"ผู้อนุมัติ")+"):", meName);
-    if(nm===null || !nm.trim()) return;
-    let image=null;
-    if(confirm("แนบรูปลายเซ็นด้วยไหม?\n\nOK = เลือกไฟล์รูปลายเซ็น · Cancel = ใช้ชื่อพิมพ์อย่างเดียว")){
-      image = await pickImageDataUrl();
+  // เตรียมไฟล์ก่อนส่ง: รูป → ย่อ + บีบเป็น JPEG (กันไฟล์ใหญ่เกิน limit + ลด token) · PDF → ส่งตามเดิม
+  async function fileToPayload(f){
+    if(f.type && f.type.startsWith("image/")){
+      try{
+        const dataUrl=await toDataUrl(f);
+        const img=await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=dataUrl; });
+        const max=1600, scale=Math.min(1, max/Math.max(img.width,img.height));
+        const cw=Math.max(1,Math.round(img.width*scale)), ch=Math.max(1,Math.round(img.height*scale));
+        const cv=document.createElement("canvas"); cv.width=cw; cv.height=ch;
+        cv.getContext("2d").drawImage(img,0,0,cw,ch);
+        return { image:cv.toDataURL("image/jpeg",0.82), mime:"image/jpeg" };
+      }catch(e){ /* ถ้าย่อไม่ได้ ส่งไฟล์เดิม */ }
     }
-    setSigBusy(true);
-    const { error }=await supabase.from("hub_signatures").insert({request_id:id,kind,user_id:uid,signer_name:nm.trim(),signer_role:role,image_data:image});
-    setSigBusy(false);
-    if(error){ setMsg("ลงนามไม่สำเร็จ: "+error.message); return; }
-    setMsg("ลงนามเรียบร้อย"); load();
+    const dataUrl=await toDataUrl(f);
+    return { image:dataUrl, mime: f.type||(/\.pdf$/i.test(f.name)?"application/pdf":"image/jpeg") };
   }
-  function printTravelPDF(){
-    const fd=r.form_data||{}; const list=Array.isArray(fd.trips)?fd.trips:[];
-    const sR=sigs.find(s=>s.kind==="review"), sA=sigs.find(s=>s.kind==="approve");
-    const odo=atts.filter(a=>String(a.slot_key||"").startsWith("odo_"));
-    const totKm=list.reduce((s,t)=>s+(Number(t.km)||0),0);
-    const totAmt=list.reduce((s,t)=>s+(Number(t.amount)||0),0);
-    const esc=(s)=>String(s==null?"":s).replace(/[&<>]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
-    const rows=list.map(t=>`<tr><td style="text-align:center">${t.no}</td><td>${esc(t.date)}</td><td>${esc(t.dest)}</td><td style="text-align:right">${t.odo_out==null?"":t.odo_out}</td><td style="text-align:right">${t.odo_in==null?"":t.odo_in}</td><td style="text-align:right">${t.km==null?"":t.km}</td><td style="text-align:right">${t.maps_km==null?"":t.maps_km}</td><td style="text-align:center">${t.over?"⚠ ตรวจสอบ":"✓ ปกติ"}</td><td style="text-align:right">${fmtMoney(t.amount)}</td></tr>`+((t.over&&t.reason)?`<tr><td></td><td colspan="8" style="color:#b03a2e;font-size:11px">เหตุผล/จุดแวะ: ${esc(t.reason)}</td></tr>`:"")).join("");
-    const sigBlock=(title,s,fbName,fbTime)=>`<div style="flex:1;text-align:center;padding:0 8px"><div style="height:54px;display:flex;align-items:flex-end;justify-content:center">${(s&&s.image_data)?`<img src="${s.image_data}" style="max-height:52px;max-width:150px"/>`:""}</div><div style="border-top:1px solid #333;margin-top:2px;padding-top:3px;font-size:12px">${esc(s?s.signer_name:(fbName||"................"))}</div><div style="font-size:11px;color:#555">${title}</div><div style="font-size:10px;color:#777">${s?("ลงนามอิเล็กทรอนิกส์ "+new Date(s.created_at).toLocaleString("th-TH")):(fbTime||"วันที่ ......../......../.......")}</div></div>`;
-    const olab=(k)=>{ const m=/^odo_(\d+)_(out|in)$/.exec(k||""); return m?("เที่ยว "+m[1]+" "+(m[2]==="out"?"ขาไป":"ขากลับ")):"เลขไมล์"; };
-    const photos=odo.map(a=>{ const u=thumbs[a.file_path]; return u?`<div style="display:inline-block;text-align:center;margin:3px;vertical-align:top"><img src="${u}" style="width:150px;height:110px;object-fit:cover;border:1px solid #ccc"/><div style="font-size:10px">${olab(a.slot_key)}</div></div>`:""; }).join("");
-    const html=`<!doctype html><html><head><meta charset="utf-8"><title>ค่าเดินทาง ${esc(r.ticket_no)}</title><style>*{font-family:'TH Sarabun New','Sarabun',Tahoma,sans-serif;box-sizing:border-box}body{margin:0;padding:24px;color:#111;font-size:13px}h1{font-size:18px;margin:0 0 2px}table{width:100%;border-collapse:collapse;margin:6px 0}th,td{border:1px solid #999;padding:4px 6px;font-size:12px}th{background:#eef}.sec{font-weight:700;background:#f0f0f0;padding:4px 8px;margin:10px 0 4px;border-left:4px solid #2E5A88}.kv{display:flex;flex-wrap:wrap;gap:2px 24px}.kv div{min-width:220px;padding:2px 0}@media print{button{display:none}}</style></head><body><button onclick="window.print()" style="float:right;padding:6px 12px">🖨 พิมพ์ / บันทึก PDF</button><h1>แบบฟอร์มขอเบิกค่าเดินทาง — รถยนต์ส่วนตัว</h1><div style="font-size:11px;color:#555">บริษัท เอเอ็มอาร์ เอเชีย จำกัด (มหาชน) · Private Vehicle Travel Reimbursement · เลขที่ ${esc(r.ticket_no)}</div><div class="sec">ส่วนที่ 1 — ข้อมูลผู้เดินทาง</div><div class="kv"><div><b>ชื่อผู้เดินทาง:</b> ${esc(r.requester&&r.requester.full_name)}</div><div><b>รหัสพนักงาน:</b> ${esc(fd.emp_code)}</div><div><b>แผนก/โครงการ:</b> ${esc(r.project?(r.project.code+" · "+r.project.name):(r.department_code||""))}</div><div><b>ทะเบียนรถ:</b> ${esc(fd.plate)}</div><div><b>Cost Code:</b> ${esc(exp[0]&&exp[0].hub_cost_codes?(exp[0].hub_cost_codes.code+" · "+exp[0].hub_cost_codes.name):"")}</div><div><b>อัตรา:</b> ${fd.rate||7} บาท/กม.</div></div><div class="sec">ส่วนที่ 2 — รายละเอียดการเดินทาง</div><table><thead><tr><th>ครั้ง</th><th>วันที่</th><th>ปลายทาง/วัตถุประสงค์</th><th>ไมล์ไป</th><th>ไมล์กลับ</th><th>กม.</th><th>Maps</th><th>ตรวจ</th><th>เงิน</th></tr></thead><tbody>${rows}<tr style="font-weight:700"><td colspan="5" style="text-align:right">รวมทั้งสิ้น</td><td style="text-align:right">${totKm}</td><td></td><td></td><td style="text-align:right">${fmtMoney(totAmt)}</td></tr></tbody></table><div class="sec">ส่วนที่ 3 — คำรับรองของผู้เดินทาง</div><div style="font-size:11.5px">ข้าพเจ้าขอรับรองว่าได้เดินทางไปปฏิบัติงานตามรายการข้างต้นจริง · ภาพเลขไมล์ที่แนบเป็นภาพถ่ายจริง ไม่ใช้ภาพซ้ำ · ระยะทางที่เบิกเพื่อปฏิบัติงานเท่านั้น · ไม่มีการเบิกซ้ำซ้อนกับค่าน้ำมัน/Fleet Card ทริปเดียวกัน</div><div class="sec">ส่วนที่ 4 — สายการอนุมัติ</div><div style="display:flex;margin-top:16px">${sigBlock("พนักงาน (ผู้ขอเบิก)",null,r.requester&&r.requester.full_name,"ยื่นในระบบ "+new Date(r.created_at).toLocaleDateString("th-TH"))}${sigBlock("หัวหน้างาน / PM (ผู้ตรวจสอบ)",sR)}${sigBlock("ผู้อนุมัติ (CPO)",sA)}</div>${photos?`<div class="sec">ภาพถ่ายเลขไมล์</div><div>${photos}</div>`:""}</body></html>`;
-    const w=window.open("","_blank"); if(!w){ setMsg("เบราว์เซอร์บล็อกป๊อปอัป — อนุญาตป๊อปอัปแล้วลองใหม่"); return; }
-    w.document.write(html); w.document.close();
+  async function ocrOne(f){
+    const { image, mime }=await fileToPayload(f);
+    const res=await fetch("/api/extract-bill",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image,mime})});
+    let j; try{ j=await res.json(); }catch(e){ throw new Error("HTTP "+res.status+" (ไฟล์อาจใหญ่เกิน หรือ endpoint ผิดพลาด)"); }
+    if(!res.ok||j.error) throw new Error(j.error||("HTTP "+res.status));
+    return { data:j.data||{}, model:j.model };
   }
-  // ── ใบขอเบิกค่ารับรอง (AMR14/2569) — สร้างจากข้อมูลที่กรอกในระบบ ──
-  function printEntPDF(){
-    const fd=r.form_data||{};
-    const esc=(s)=>String(s==null?"":s).replace(/[&<>]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[m]));
-    const amount=Number(fd.amount)|| (exp[0]?Number(exp[0].amount):0) || 0;
-    const dateTH=new Date(fd.invoice_date||r.created_at).toLocaleDateString("th-TH",{day:"2-digit",month:"long",year:"numeric"});
-    const intoProject=!!r.project && !fd.ent_no_project;
-    const ocrItems=(fd._ocr&&Array.isArray(fd._ocr.items))?fd._ocr.items:[];
-    const items=ocrItems.length?ocrItems.map((it,i)=>({no:i+1,date:it.date||"",desc:it.name||it.description||"",amt:Number(it.amount)||0}))
-      :[{no:1,date:fd.invoice_date||"",desc:fd.expense_desc||fd.ent_detail||r.title||"",amt:amount}];
-    const total=items.reduce((s,it)=>s+(Number(it.amt)||0),0)||amount;
-    const filler=Array.from({length:Math.max(0,5-items.length)}).map((_,i)=>`<tr><td style="text-align:center">${items.length+i+1}</td><td></td><td></td><td></td></tr>`).join("");
-    const rows=items.map(it=>`<tr><td style="text-align:center">${it.no}</td><td style="text-align:center">${esc(it.date)}</td><td>${esc(it.desc)}</td><td style="text-align:right">${fmtMoney(it.amt)}</td></tr>`).join("")+filler;
-    const need=total>20000?"ceo":(total>3000?"clevel":"dir");
-    const box=(title,cap,on,name)=>`<td style="border:1px solid #999;padding:8px 6px;text-align:center;vertical-align:top;width:25%;${on?"background:#FFF3E0":""}"><div style="font-weight:700;font-size:11px">${title}</div><div style="font-size:10px;color:#666">${cap}</div><div style="height:44px"></div><div style="border-top:1px solid #333;margin:0 6px;padding-top:2px;font-size:11px">( ${esc(name||"")} )</div><div style="font-size:10px;color:#555">ตำแหน่ง ...............</div><div style="font-size:10px;color:#555">วันที่ ......./......./.......</div></td>`;
-    const chk=(on)=>on?"☑":"☐";
-    const html=`<!doctype html><html><head><meta charset="utf-8"><title>ใบขอเบิกค่ารับรอง ${esc(r.ticket_no)}</title><style>*{font-family:'TH Sarabun New','Sarabun',Tahoma,sans-serif;box-sizing:border-box}body{margin:0;padding:26px;color:#111;font-size:13px}h1{font-size:19px;text-align:center;margin:0 0 12px}table{width:100%;border-collapse:collapse}td,th{border:1px solid #999;padding:4px 6px;font-size:12px}.row{margin:3px 0}u{text-underline-offset:3px}@media print{button{display:none}}</style></head><body>
-<button onclick="window.print()" style="float:right;padding:6px 12px">🖨 พิมพ์ / บันทึก PDF</button>
-<div style="font-size:11px;color:#555">บริษัท เอเอ็มอาร์ เอเชีย จำกัด (มหาชน) · เลขที่คำขอ ${esc(r.ticket_no)} · ตามประกาศ AMR14/2569</div>
-<h1>ใบขอเบิกค่ารับรอง</h1>
-<div class="row" style="text-align:right">วันที่ <u>${dateTH}</u></div>
-<div class="row"><b>ชื่อผู้ขอเบิก</b> <u>${esc(r.requester&&r.requester.full_name)}</u> &nbsp; <b>ตำแหน่ง</b> <u>${esc(fd.requester_title||"")}</u></div>
-<div class="row"><b>รหัสแผนก</b> <u>${esc(r.department_code||"")}</u></div>
-<div class="row"><b>เบิกค่ารับรองเข้า</b></div>
-<div class="row" style="margin-left:14px">${chk(!intoProject)} แผนก &nbsp; รหัสแผนก <u>${esc(!intoProject?(r.department_code||""):"")}</u></div>
-<div class="row" style="margin-left:14px">${chk(intoProject)} โครงการ &nbsp; รหัสโครงการ <u>${esc(intoProject?(r.project.code||""):"")}</u> &nbsp; ชื่อโครงการ <u>${esc(intoProject?(r.project.name||""):"")}</u></div>
-<div class="row"><b>รับรองหน่วยงาน</b> <u>${esc(fd.ent_company||"")}</u></div>
-<div class="row"><b>ชื่อผู้เข้าร่วมการรับรอง</b> <u>${esc(fd.ent_person||"")}</u></div>
-<div class="row"><b>วัตถุประสงค์การเบิกค่ารับรอง</b> <u>${esc(fd.ent_purpose||"")}${fd.ent_detail?(" — "+esc(fd.ent_detail)):""}</u></div>
-<div class="row" style="font-weight:700;margin-top:8px">รายละเอียดค่ารับรอง</div>
-<table><thead><tr><th style="width:8%">ลำดับ</th><th style="width:20%">วัน เดือน ปี</th><th>รายละเอียด</th><th style="width:18%">จำนวนเงิน</th></tr></thead><tbody>${rows}<tr><td colspan="3" style="text-align:right;font-weight:700">รวม</td><td style="text-align:right;font-weight:700">${fmtMoney(total)}</td></tr></tbody></table>
-<div style="font-size:11px;color:#b03a2e;margin:3px 0 10px">(กรุณาแนบหลักฐานใบกำกับภาษี ใบเสร็จรับเงิน หรือหลักฐานการจ่ายเงิน สำหรับทุกรายการ)</div>
-<table><tbody><tr>${box("ผู้จัดทำ","",false,r.requester&&r.requester.full_name)}${box("ผู้อนุมัติ (ผอ.ฝ่าย)","กรณี ไม่เกิน 3,000 บาท",need==="dir","")}${box("ผู้อนุมัติ (C-Level)","กรณี ไม่เกิน 20,000 บาท",need==="clevel","")}${box("ผู้อนุมัติ (CEO)","กรณี เกิน 20,000 บาท",need==="ceo","")}</tr></tbody></table>
-<div style="font-size:10.5px;color:#666;margin-top:6px">* ช่องที่ไฮไลต์ = ระดับผู้อนุมัติที่ต้องลงนามตามวงเงิน ${fmtMoney(total)} บาท/คน/ครั้ง (ประกาศ AMR14/2569)</div>
-</body></html>`;
-    const w=window.open("","_blank"); if(!w){ setMsg("เบราว์เซอร์บล็อกป๊อปอัป — อนุญาตป๊อปอัปแล้วลองใหม่"); return; }
-    w.document.write(html); w.document.close();
+  // โหมดหลายรายการ: 1 ไฟล์ (ใบปะหน้า+บิลจริงหลายใบ) → คืน items[] แตกทีละบิล
+  async function ocrMulti(f){
+    const { image, mime }=await fileToPayload(f);
+    const res=await fetch("/api/extract-bill",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image,mime,multi:true})});
+    let j; try{ j=await res.json(); }catch(e){ throw new Error("HTTP "+res.status+" (ไฟล์อาจใหญ่เกิน หรือ endpoint ผิดพลาด)"); }
+    if(!res.ok||j.error) throw new Error(j.error||("HTTP "+res.status));
+    const d=j.data||{}; return { items:Array.isArray(d.items)?d.items:[], model:j.model };
   }
-  // ── Export ใบเบิก/เคลียร์เงินทดรองจ่าย เป็น Excel ตามแบบฟอร์มบริษัท ──
-  async function exportAdvanceXlsx(){
-    setMsg("กำลังสร้างไฟล์ Excel…");
-    const { data:sess }=await supabase.auth.getSession();
-    const token=sess?.session?.access_token;
-    if(!token){ setMsg("เซสชันหมดอายุ — เข้าสู่ระบบใหม่"); return; }
+  // จับคู่ cost_code ที่ถอดได้ กับ cost code ในระบบ (ตรงเป๊ะ → มีในข้อความ) คืน id หรือ ""
+  const matchCode=(s)=>{ if(!s) return ""; const t=String(s).replace(/\s/g,"").toUpperCase();
+    const hit=codes.find(c=>String(c.code).replace(/\s/g,"").toUpperCase()===t)
+      || codes.find(c=>{ const cc=String(c.code).replace(/\s/g,"").toUpperCase(); return cc&&(t.includes(cc)||cc.includes(t)); });
+    return hit?hit.id:""; };
+  const pickImgs=()=>new Promise(r=>{ const i=document.createElement("input"); i.type="file"; i.accept="image/*,application/pdf,.pdf"; i.multiple=true; i.onchange=()=>r(i.files?[...i.files]:[]); i.click(); });
+  // ยอดเดี่ยว (OF/Billing/จัดซื้อ)
+  async function extractBill(){
+    const f=await pickImg(); if(!f) return;
+    setOcrBusy(true); setErr(null);
     try{
-      const res=await fetch("/api/admin/export-advance",{ method:"POST",
-        headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+token },
-        body:JSON.stringify({ request_id:id }) });
-      if(!res.ok){ let m="สร้างไฟล์ไม่สำเร็จ"; try{ const j=await res.json(); m=j.error||m; }catch(e){} setMsg("⛔ "+m); return; }
-      const blob=await res.blob(); const cd=res.headers.get("Content-Disposition")||"";
-      let fname="advance.xlsx"; const mm=/filename\*=UTF-8''([^;]+)/.exec(cd); if(mm){ try{ fname=decodeURIComponent(mm[1]); }catch(e){} }
-      const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=fname;
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-      setMsg("ดาวน์โหลดไฟล์ Excel แล้ว ✓");
-    }catch(e){ setMsg("⛔ "+(e?.message||e)); }
+      const { data:d, model }=await ocrOne(f);
+      // ⛔ ตรวจสกุลเงิน: ถ้าเป็นสกุลต่างประเทศ ‘ล้วน’ (ไม่มียอดบาท เช่น PR/ใบเสนอราคา USD ที่ยังไม่ระบุ exchange rate)
+      //    ห้ามเติมตัวเลขต่างประเทศลงช่องบาท เพราะจะตัดงบผิด — ให้ผู้ใช้กรอกยอดบาทเอง
+      const cur=String(d.currency||"").toUpperCase();
+      const fxc=String(d.fx_currency||"").toUpperCase();
+      const hasFx = d.fx_amount!=null && fxc && fxc!=="THB";
+      const thbTotal = (cur && cur!=="THB") ? null : (Number(d.total)>0 ? Number(d.total) : null);
+      const foreignNoThb = (hasFx || (cur && cur!=="THB")) && (thbTotal==null || thbTotal===Number(d.fx_amount));
+      setOcr({...d, model, _foreign: foreignNoThb, _fxc: fxc||cur});
+      if(foreignNoThb){ setFxOn(true); setFx(v=>({cur:(fxc||cur||v.cur), amt:(d.fx_amount!=null?String(d.fx_amount):v.amt), rate:v.rate})); }
+      if(!foreignNoThb && thbTotal>0) up("amount", String(thbTotal));
+      setFd(prev=>ocrToFd(d, sel?.form_schema, prev));   // เติมช่องในฟอร์มให้ด้วย (เฉพาะที่ว่าง)
+      setFiles(v=>[...v, f]);   // แนบบิลเป็นหลักฐานอัตโนมัติ
+    }catch(e){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(e?.message||e)); }
+    setOcrBusy(false);
   }
-  const now=new Date();
-  const active=["assigned","in_progress","waiting","revising"].includes(r.status);
-  const trips = Array.isArray(r.form_data?.trips) ? r.form_data.trips : null;
-  const sigReview = sigs.find(s=>s.kind==="review");
-  const sigApprove = sigs.find(s=>s.kind==="approve");
-  const odoPhotos = atts.filter(a=>String(a.slot_key||"").startsWith("odo_"));
-  const odoLabel=(k)=>{ const m=/^odo_(\d+)_(out|in)$/.exec(k||""); return m?("เที่ยว "+m[1]+" · "+(m[2]==="out"?"ขาไป":"ขากลับ")):"เลขไมล์"; };
-  const canRate = r.status==="closed" && uid===r.requester_id;
-  const isEntReq = /Client Entertainment/.test(r.form_data?.doc_type||"");
-  const isAdvReq = /advance/i.test(r.hub_request_types?.name||"");
-  const canExportAdv = staff; // ทีม GA (hub_team) ทุกคน export ได้
-  return (<Shell title={"คำขอ "+(r.ticket_no||"")}>
-    {msg&&<div className="ok">{msg}</div>}
-    <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:18}}>
-      <div>
-        <div className="card">
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div><span className="mono">{r.ticket_no}</span> &nbsp; <StatusBadge s={r.status}/>
-              {r.rework_count>0&&<span className="tag" style={{marginLeft:6,background:"#FBF1DE",color:"#9A5B00"}}>ตีกลับ {r.rework_count} ครั้ง</span>}</div>
-            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
-              {!editType ? (<>
-                <span className="tag">{r.hub_request_types?.name}</span>
-                {((r.requester_id===uid && r.status==="new")||(canManage&&!["closed","cancelled"].includes(r.status)))&&
-                  <button className="btn sm sec" style={{fontSize:11,padding:"2px 8px"}} title="เลือกหัวข้อผิด? แก้ประเภทงานได้ที่นี่"
-                    onClick={()=>{setNewType(r.request_type_id);setEditType(true);}}>✏️ แก้ประเภท</button>}
-              </>) : (<>
-                <select value={newType} onChange={e=>setNewType(e.target.value)} style={{fontSize:12,maxWidth:250,padding:"4px 6px"}}>
-                  {types.map(t=>(<option key={t.id} value={t.id}>{t.name}</option>))}
-                </select>
-                <button className="btn sm" style={{fontSize:11,padding:"2px 8px"}} disabled={typeBusy} onClick={saveType}>{typeBusy?"…":"บันทึก"}</button>
-                <button className="btn sm sec" style={{fontSize:11,padding:"2px 8px"}} onClick={()=>setEditType(false)}>ยกเลิก</button>
-              </>)}
-            </div>
-          </div>
-          <h2 style={{fontSize:18}}>{r.title}</h2>
-          {r.project&&<div style={{margin:"6px 0"}}><span className="tag" style={{background:"#EEF4FF",borderColor:"#C7D9F7",color:"#2D6CDF"}}>📁 {r.project.code} · {r.project.name}</span></div>}
-          <p className="muted" style={{whiteSpace:"pre-wrap",margin:"8px 0"}}>{r.detail||"—"}</p>
-          <div className="muted">ผู้ขอ: {r.requester?.full_name||"—"} · ความเร่งด่วน: {r.priority} · ครบ SLA: {fmtDate(r.sla_due_at)}
-            {r.sla_due_at&&new Date(r.sla_due_at)<now&&!["review","closed","cancelled"].includes(r.status)&&<b style={{color:"#B03A2E"}}> · เกิน SLA</b>}</div>
-          {r.review_note&&["in_progress","assigned","waiting"].includes(r.status)&&r.rework_count>0&&
-            <div style={{marginTop:8,padding:"8px 10px",background:"#FBF1DE",borderRadius:6,fontSize:13,color:"#9A5B00"}}>ตีกลับให้แก้: {r.review_note}</div>}
-          {r.status==="waiting"&&r.waiting_note&&
-            <div style={{marginTop:8,padding:"8px 10px",background:"#FFF4E0",borderRadius:6,fontSize:13,color:"#8A5A00"}}>
-              ⏳ <b>ทีมงานรอข้อมูลเพิ่มเติม:</b> {r.waiting_note}</div>}
-        </div>
-
-        <div className="card">
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-            <h2 style={{margin:0}}>📋 ข้อมูลสำหรับดำเนินการ</h2>
-            {uid===r.requester_id && !editing && (
-              r.status==="new"
-                ? <button className="btn sm sec" onClick={()=>{ setEditDraft({detail:r.detail||"",form_data:{...(r.form_data||{})},priority:r.priority||"normal"}); setEditing(true); }}>✏️ แก้ไขคำขอ</button>
-                : <span className="muted" style={{fontSize:11.5}}>🔒 แก้ไขไม่ได้ (ถูกมอบหมายแล้ว)</span>
-            )}
-          </div>
-          {!editing
-            ? <DynView schema={r.hub_request_types?.form_schema} data={r.form_data||{}}/>
-            : (<div>
-                <div style={{background:"#FFF8E6",border:"1px solid #EBD9AE",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12.5,color:"#8A5A00"}}>
-                  แก้ไขได้เฉพาะตอนที่งานยัง "ใหม่" (ยังไม่ถูกมอบหมาย) — เมื่อบันทึกแล้วกด "ส่งใหม่" ไม่ต้อง
-                </div>
-                <DynForm schema={r.hub_request_types?.form_schema} data={editDraft.form_data}
-                  onChange={fd=>setEditDraft(d=>({...d,form_data:fd}))}/>
-                <div className="field"><label>ความเร่งด่วน</label>
-                  <select value={editDraft.priority} onChange={e=>setEditDraft(d=>({...d,priority:e.target.value}))}>
-                    <option value="low">ต่ำ</option><option value="normal">ปกติ</option><option value="high">สูง</option><option value="urgent">ด่วนมาก</option>
-                  </select></div>
-                <div className="field"><label>หมายเหตุเพิ่มเติม</label>
-                  <textarea value={editDraft.detail} onChange={e=>setEditDraft(d=>({...d,detail:e.target.value}))}/></div>
-                <div style={{display:"flex",gap:8}}>
-                  <button className="btn sm" onClick={saveEdit}>💾 บันทึกการแก้ไข</button>
-                  <button className="btn sm sec" onClick={()=>setEditing(false)}>ยกเลิก</button>
-                </div>
-              </div>)}
-        </div>
-
-        {isAdvReq&&canExportAdv&&(<div className="card" style={{background:"#F1F8F4",border:"1px solid #BFE2CC"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-            <h2 style={{margin:0}}>📊 ใบเบิก/เคลียร์เงินทดรองจ่าย (Excel)</h2>
-            <button className="btn sm" onClick={exportAdvanceXlsx}>⬇ Export Excel ตามแบบฟอร์ม</button>
-          </div>
-          <div className="muted" style={{fontSize:12,marginTop:6}}>สร้างไฟล์ Excel ตามแบบฟอร์มบริษัท (Advance Request / Clearing Form) เติมข้อมูลจากคำขอให้อัตโนมัติ — สำหรับทีม GA ทุกคน</div>
-        </div>)}
-
-        {isEntReq&&(<div className="card" style={{background:"#FFFBF4",border:"1px solid #EBD9AE"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-            <h2 style={{margin:0}}>🍽️ ใบขอเบิกค่ารับรอง</h2>
-            <button className="btn sm" onClick={printEntPDF}>🖨 สร้างใบขอเบิกค่ารับรอง (PDF)</button>
-          </div>
-          <div className="muted" style={{fontSize:12,marginTop:6}}>สร้างใบขอเบิกค่ารับรองตามแบบฟอร์มบริษัท (ประกาศ AMR14/2569) จากข้อมูลที่กรอกอัตโนมัติ — เปิดแล้วกดพิมพ์/บันทึกเป็น PDF เพื่อเสนอผู้อนุมัติตามวงเงิน</div>
-        </div>)}
-
-        {trips&&(<div className="card">
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-            <h2 style={{margin:0}}>🚗 รายละเอียดค่าเดินทาง</h2>
-            <button className="btn sm sec" onClick={printTravelPDF}>🖨 Export PDF</button>
-          </div>
-          <div className="muted" style={{fontSize:12,marginBottom:8}}>
-            รหัสพนักงาน: <b>{r.form_data?.emp_code||"—"}</b> · ทะเบียนรถ: <b>{r.form_data?.plate||"—"}</b> · อัตรา {r.form_data?.rate||7} บาท/กม.
-          </div>
-          <div style={{overflowX:"auto"}}>
-          <table style={{fontSize:12}}><thead><tr>
-            <th>#</th><th>วันที่</th><th>ปลายทาง</th><th className="right">ไมล์ไป</th><th className="right">ไมล์กลับ</th><th className="right">กม.</th><th className="right">Maps</th><th>ตรวจ</th><th className="right">เงิน</th>
-          </tr></thead><tbody>
-          {trips.map(t=>(<Fragment key={t.no}>
-            <tr>
-              <td style={{textAlign:"center"}}>{t.no}</td><td>{t.date}</td><td>{t.dest}</td>
-              <td className="right">{t.odo_out}</td><td className="right">{t.odo_in}</td>
-              <td className="right"><b>{t.km}</b></td><td className="right">{t.maps_km}</td>
-              <td style={{color:t.over?"#B03A2E":"#2E7D5B",fontSize:11,fontWeight:700}}>{t.over?"⚠ ตรวจสอบ":"✓ ปกติ"}</td>
-              <td className="right">{fmtMoney(t.amount)}</td>
-            </tr>
-            {t.over&&t.reason&&<tr><td></td><td colSpan="8" style={{fontSize:11,color:"#B03A2E"}}>เหตุผล/จุดแวะ: {t.reason}</td></tr>}
-          </Fragment>))}
-          <tr style={{fontWeight:700,borderTop:"2px solid #DDE6E0",background:"#FAFDFB"}}>
-            <td colSpan="5" className="right">รวมทั้งสิ้น</td><td className="right">{r.form_data?.total_km}</td><td></td><td></td>
-            <td className="right">{fmtMoney(trips.reduce((s,t)=>s+(Number(t.amount)||0),0))}</td>
-          </tr>
-          </tbody></table>
-          </div>
-          {odoPhotos.length>0&&<div style={{marginTop:8}}>
-            <div className="muted" style={{fontSize:12,marginBottom:4}}>รูปเลขไมล์ ({odoPhotos.length})</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              {odoPhotos.map(a=>{ const th=thumbs[a.file_path]; return (<div key={a.id} style={{textAlign:"center"}}>
-                {th
-                  ? <img src={th} alt={a.file_name} onClick={()=>openAttachment(a.file_path)} style={{width:96,height:72,objectFit:"cover",borderRadius:6,border:"1px solid #DDE3E8",cursor:"pointer",display:"block"}}/>
-                  : <div className="muted" style={{fontSize:11}}>{fileIcon(a.mime_type)} {a.file_name}</div>}
-                <div style={{fontSize:10.5,fontWeight:700,color:String(a.slot_key||"").endsWith("_out")?"#2453A8":"#8A5A00",marginTop:2}}>{odoLabel(a.slot_key)}</div>
-              </div>); })}
-            </div>
-          </div>}
-        </div>)}
-
-        {trips&&(<div className="card">
-          <h2>✍️ ลายเซ็นอนุมัติ (สำหรับบัญชีทำจ่าย)</h2>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,fontSize:12.5}}>
-            <div style={{textAlign:"center",border:"1px solid #E4E7EB",borderRadius:8,padding:10}}>
-              <div style={{height:44}}></div>
-              <div style={{fontWeight:700,borderTop:"1px solid #ccc",paddingTop:4}}>{r.requester?.full_name||"—"}</div>
-              <div className="muted" style={{fontSize:11}}>พนักงาน (ผู้ขอเบิก)</div>
-              <div className="muted" style={{fontSize:10}}>ยื่นในระบบ {fmtDate(r.created_at)}</div>
-            </div>
-            {[["review","หัวหน้างาน / PM (ผู้ตรวจสอบ)",sigReview,canAssign],["approve","ผู้อนุมัติ (CPO)",sigApprove,role==="owner"]].map(([kind,label,s,canSign])=>(
-              <div key={kind} style={{textAlign:"center",border:"1px solid "+(s?"#B7DEC8":"#E4E7EB"),borderRadius:8,padding:10,background:s?"#F6FBF8":"#fff"}}>
-                <div style={{height:44,display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  {s?.image_data?<img src={s.image_data} alt="ลายเซ็น" style={{maxHeight:42,maxWidth:120}}/>:(s?<span style={{color:"#2E7D5B",fontSize:20}}>✓</span>:null)}
-                </div>
-                <div style={{fontWeight:700,borderTop:"1px solid #ccc",paddingTop:4}}>{s?s.signer_name:"— ยังไม่ลงนาม —"}</div>
-                <div className="muted" style={{fontSize:11}}>{label}</div>
-                {s?<div className="muted" style={{fontSize:10}}>ลงนาม {fmtDate(s.created_at)}</div>
-                  :canSign?<button className="btn sm" style={{marginTop:6,fontSize:11}} disabled={sigBusy} onClick={()=>sign(kind)}>✍️ ลงนาม</button>
-                  :<div className="muted" style={{fontSize:10,marginTop:4}}>รอผู้มีสิทธิ์ลงนาม</div>}
-              </div>
+  // ค่ารับรองหลายใบ: เลือกหลายไฟล์ (1 ไฟล์ = 1 บิล) → ถอดทุกใบ → รวมยอดใส่ช่องจำนวนเงิน + เก็บรายการลง _ocr.items (ขึ้นในใบขอเบิกค่ารับรอง PDF)
+  async function extractEntBills(){
+    const fs=await pickImgs(); if(!fs.length) return;
+    setOcrBusy(true); setErr(null);
+    const items=[]; const addF=[]; let fail=0; let lastErr="";
+    for(const f of fs){
+      try{ const { data:d }=await ocrOne(f);
+        const cur=String(d.currency||"").toUpperCase();
+        const thb=(cur&&cur!=="THB")?0:(Number(d.total)>0?Number(d.total):0);
+        items.push({ date:d.date||"", name:[d.vendor,d.description].filter(Boolean).join(" · ")||"ค่ารับรอง", amount:thb });
+        addF.push(f);
+      }catch(e){ fail++; lastErr=(e&&e.message)||String(e); }
+    }
+    const total=Math.round(items.reduce((s,it)=>s+(Number(it.amount)||0),0)*100)/100;
+    if(items.length){
+      setOcr({ items, model:"ent-multi" });
+      if(total>0) up("amount", String(total));
+      setFiles(v=>[...v, ...addF]);
+    }
+    setOcrBusy(false);
+    setErr(items.length
+      ? ("ถอดได้ "+items.length+" ใบ · รวม "+fmtMoney(total)+" บาท"+(fail?(" · อ่านไม่สำเร็จ "+fail+" ไฟล์"):"")+" — ตรวจยอดก่อนส่ง (รายการจะขึ้นในใบขอเบิกค่ารับรอง PDF)")
+      : ("ถอดไม่สำเร็จ"+(lastErr?(" — "+lastErr):"")));
+  }
+  // Clear Advance: เลือกไฟล์ (แต่ละไฟล์อาจมีใบปะหน้า+บิลจริงหลายใบ) → แตกเป็นหลายบรรทัด 1 บิล/บรรทัด + auto-match cost code
+  async function extractBillsAdvance(){
+    const fs=await pickImgs(); if(!fs.length) return;
+    setOcrBusy(true); setErr(null);
+    const newLines=[]; const addF=[]; let fail=0; let lastErr=""; let matched=0;
+    for(const f of fs){
+      try{ const { items }=await ocrMulti(f);
+        if(!items.length){ fail++; lastErr="อ่านไม่พบรายการบิลในไฟล์ "+f.name; continue; }
+        for(const it of items){
+          const cid=matchCode(it.cost_code); if(cid) matched++;
+          newLines.push({
+            cost: cid,
+            amount: (it.amount!=null?String(it.amount):""),
+            note: [it.vendor, it.description, (!cid&&it.cost_code)?("[งบ: "+it.cost_code+"]"):""].filter(Boolean).join(" · "),
+            refund:false, slip:false,
+          });
+        }
+        addF.push(f);
+      }catch(e){ fail++; lastErr=(e&&e.message)||String(e); }
+    }
+    if(newLines.length) setAdvLines(a=>{ const base=(a.length===1 && !a[0].cost && !a[0].amount && !a[0].note)?[]:a; return [...base, ...newLines]; });
+    if(addF.length) setFiles(v=>[...v, ...addF]);
+    setOcrBusy(false);
+    setErr(newLines.length
+      ? ("ถอดได้ "+newLines.length+" รายการ"+(matched?(" · จับคู่ cost code อัตโนมัติ "+matched):"")+(fail?(" · มีไฟล์อ่านไม่สำเร็จ "+fail+(lastErr?(" — "+lastErr):"")):"")+" — ตรวจ Cost Code/ยอดทุกบรรทัดก่อนส่ง")
+      : ("ถอดไม่สำเร็จ "+fail+" ไฟล์"+(lastErr?(" — "+lastErr):"")));
+  }
+  // ถอดบิลใส่บรรทัด Advance ที่ระบุ
+  async function extractBillLine(i, f){
+    if(!f) return; setOcrBusy(true); setErr(null);
+    try{ const { data:d }=await ocrOne(f);
+      if(d.total!=null) setLine(i,"amount",String(d.total));
+      setLine(i,"note",[d.vendor,d.description].filter(Boolean).join(" · "));
+      setFiles(v=>[...v, f]);
+    }catch(e){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(e?.message||e)); }
+    setOcrBusy(false);
+  }
+  async function submit(e){ e.preventDefault(); setErr(null);
+    // ⛔ บังคับกรอกให้ครบก่อนส่ง
+    const miss=missingFields(sel?.form_schema, fd);
+    if(miss.length){ setErr("กรอกข้อมูลไม่ครบ — ยังขาด: "+miss.join(" · ")); window.scrollTo({top:0,behavior:"smooth"}); return; }
+    // ⛔ เอกสารบังคับต้องครบทุกช่อง (รวมเอกสารเงื่อนไข เช่น จ่ายนอกรอบ)
+    const miss2=missingDocs(sel?.doc_slots, docs, fd);
+    if(miss2.length){
+      setErr("เอกสารยังไม่ครบ — ยังขาด: "+miss2.join(" · "));
+      window.scrollTo({top:0,behavior:"smooth"}); return;
+    }
+    const nDocs=Object.values(docs).reduce((s,a)=>s+a.length,0);
+    if(sel?.require_attachment && nDocs===0 && files.length===0){
+      setErr("งานประเภทนี้ต้องแนบเอกสารหลักฐานอย่างน้อย 1 ไฟล์");
+      window.scrollTo({top:0,behavior:"smooth"}); return;
+    }
+    // ⛔ งานที่มีค่าใช้จ่าย ต้องระบุ "โครงการ" หรือ "แผนก" อย่างน้อยหนึ่ง (เบิกเข้าโครงการ/เบิกเข้าแผนก)
+    if(needExpense && !form.project && !form.department){
+      setErr("งานที่มีค่าใช้จ่าย ต้องระบุ ‘โครงการ’ (เบิกเข้าโครงการ) หรือเลือก ‘แผนก’ (เบิกเข้าแผนก) อย่างน้อยหนึ่งอย่าง");
+      window.scrollTo({top:0,behavior:"smooth"}); return;
+    }
+    // ⛔ ต้องเลือก Opex/Capex ทุกครั้งที่มีค่าใช้จ่าย
+    if(needExpense && amt>0 && !etype){
+      setErr("กรุณาเลือกประเภทงบ — Opex (ดำเนินงาน) หรือ Capex (ลงทุน)");
+      window.scrollTo({top:0,behavior:"smooth"}); return;
+    }
+    // ⛔ Clear Advance: ทุกบรรทัดที่มีเงิน ต้องเลือก Cost Code + มีอย่างน้อย 1 บรรทัด
+    if(useLines){
+      const paid=advLines.filter(l=>nAmt(l.amount)>0);
+      if(!paid.length){ setErr("ต้องมีอย่างน้อย 1 รายการที่มีจำนวนเงิน"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      // รายการค่าใช้จ่าย (ไม่ใช่เงินคืน) ต้องเลือก Cost Code
+      if(paid.filter(l=>!l.refund).some(l=>!l.cost)){ setErr("ทุกบรรทัดที่มีจำนวนเงิน ต้องเลือก Cost Code (ยกเว้นรายการเงินคืน)"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      // รายการเงินคืน ต้องแนบสลิปโอนเงิน (เฉพาะ Advance)
+      if(isAdvance && paid.filter(l=>l.refund).some(l=>!l.slip)){ setErr("รายการ ‘เงินคืน Advance’ ต้องแนบสลิปโอนเงิน (📎) ทุกบรรทัด"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      // ⛔ งบราย cost code ไม่พอ → ไม่ให้ส่ง
+      if(advOver){
+        const detail=advOverList.map(([cid,sum])=>{ const c=codes.find(x=>x.id===cid); const cc=ccMap[cid];
+          return (c?.code||"?")+" (เบิก "+fmtMoney(sum)+" · เหลือ "+fmtMoney(cc.remaining)+")"; }).join(" · ");
+        setErr("งบไม่พอราย Cost Code — "+(isAdvance?"ต้องเริ่มกระบวนการใหม่ทั้งหมด":"แก้ยอดให้อยู่ในงบก่อนส่ง")+": "+detail);
+        window.scrollTo({top:0,behavior:"smooth"}); return;
+      }
+    }
+    // ⛔ ค่าเดินทาง: ตรวจแต่ละเที่ยวให้ครบ + เกิน Maps ต้องมีเหตุผล + แนบรูปเลขไมล์ทุกเที่ยว
+    if(isTravel){
+      const active=trips.filter(t=>t.date||t.dest||t.odoOut||t.odoIn||t.mapsKm||t.photoOut||t.photoIn);
+      if(!active.length){ setErr("ต้องมีรายการเดินทางอย่างน้อย 1 เที่ยว"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      for(let i=0;i<trips.length;i++){ const t=trips[i]; const n=i+1;
+        const filled=t.date||t.dest||t.odoOut||t.odoIn||t.mapsKm||t.photoOut||t.photoIn;
+        if(!filled) continue;
+        if(!t.date||!t.dest){ setErr("เที่ยวที่ "+n+": ต้องกรอกวันที่และปลายทาง/วัตถุประสงค์"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+        if(tripKm(t)<=0){ setErr("เที่ยวที่ "+n+": เลขไมล์กลับต้องมากกว่าเลขไมล์ไป"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+        if(!(Number(t.mapsKm)>0)){ setErr("เที่ยวที่ "+n+": กรอกระยะจาก Google Maps"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+        if(!t.photoOut||!t.photoIn){ setErr("เที่ยวที่ "+n+": ต้องแนบรูปเลขไมล์ทั้ง ‘ขาไป’ และ ‘ขากลับ’"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+        if(tripOver(t) && !String(t.reason||"").trim()){ setErr("เที่ยวที่ "+n+": ระยะสูงกว่า Google Maps เกิน "+MAPS_TOL+" กม. — ต้องระบุเหตุผล/จุดแวะ"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+      }
+      if(travelKm<=0){ setErr("ต้องมีเที่ยวที่ระยะทาง > 0 อย่างน้อย 1 เที่ยว"); window.scrollTo({top:0,behavior:"smooth"}); return; }
+    }
+    // ⛔ งบไม่พอ → ต้องผ่าน governance (โยกงบ Opex / มติ Excom Capex) ก่อน
+    if(overBudget && !govReady){
+      setErr("งบโครงการไม่พอ (ขาด "+fmtMoney(shortfall)+" บาท) — "+govMsg);
+      window.scrollTo({top:0,behavior:"smooth"}); return;
+    }
+    setBusy(true);
+    const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
+    if(!uid){ setErr("เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่แล้วส่งอีกครั้ง"); setBusy(false); return; }
+    const sla=new Date(Date.now()+(Number(sel?.default_sla_hours||24))*3600e3).toISOString();
+    const { data:req, error }=await supabase.from("hub_requests").insert({
+      requester_id:uid, request_type_id:form.type, title:form.title, detail:form.detail,
+      priority:form.priority, requested_due:form.due||null, sla_due_at:sla, status:"new",
+      project_id: form.project||null, department_code: form.department||null,
+      form_data: isTravel ? {...fd, rate:RATE_KM, total_km:travelKm,
+        trips: trips.filter(t=>tripKm(t)>0).map((t,i)=>({no:i+1,date:t.date,vtype:t.vtype,dest:t.dest,
+          odo_out:Number(t.odoOut),odo_in:Number(t.odoIn),km:tripKm(t),maps_km:Number(t.mapsKm),
+          diff:tripDiff(t),over:tripOver(t),reason:t.reason||"",amount:tripKm(t)*RATE_KM})) }
+          : { ...fd,
+              ...(ocr ? { _ocr:{...ocr, confirmed_total:amt, at:new Date().toISOString()} } : {}),
+              ...(fxOn && fxThb>0 ? { _fx:{ currency:fx.cur||null, fx_amount:Number(fx.amt)||null, rate:Number(fx.rate)||null, thb:fxThb } } : {}) }
+    }).select().single();
+    if(error){ setErr(error.message); setBusy(false); return; }
+    if(needExpense && (amt>0 || (useLines && advRefund>0))){
+      // 1 entry รวม (amount = ค่าใช้จ่ายจริง ไม่รวมเงินคืน) คุมอนุมัติ+งบ · สถานะอนุมัติกำหนดโดย trigger DB
+      const { data:entry, error:eerr }=await supabase.from("hub_expense_entries").insert({
+        request_id:req.id, project_id:form.project||null,
+        cost_code_id: useLines ? null : (form.cost||null),
+        amount: amt,
+        expense_type: etype||null,
+        out_of_budget: !!overBudget,
+        ob_kind: overBudget ? (etype==="opex"?"transfer":"excom") : null
+      }).select("id").single();
+      if(eerr){ setErr("บันทึกคำขอแล้ว แต่บันทึกรายการค่าใช้จ่ายไม่สำเร็จ ("+eerr.message+") — แจ้งแอดมินก่อนส่งซ้ำ"); setBusy(false); return; }
+      // breakdown รายบรรทัด (Clear Advance)
+      if(useLines && entry){
+        const lines=advLines
+          .filter(l=>nAmt(l.amount)>0)
+          .map(l=>({ request_id:req.id, entry_id:entry.id, cost_code_id:l.refund?null:(l.cost||null),
+                     amount:nAmt(l.amount), description:l.note||null, is_refund:!!l.refund }));
+        if(lines.length){ const { error:lerr }=await supabase.from("hub_expense_lines").insert(lines);
+          if(lerr){ setErr("บันทึกคำขอแล้ว แต่บันทึกรายการแยก Cost Code ไม่สำเร็จ ("+lerr.message+") — แจ้งแอดมิน"); setBusy(false); return; } }
+      }
+    }
+    // งบไม่พอ + Opex → บันทึกการโยกงบ (ปรับตัวเลขงบจริง)
+    if(overBudget && etype==="opex"){
+      const { error:terr }=await supabase.rpc("hub_record_budget_transfer",{
+        p_request:req.id, p_to:form.project, p_from:tFrom, p_amount:tAmtNum,
+        p_scope:tScope, p_cfo:cfo, p_ceo:ceo, p_note:null });
+      if(terr){ setErr("บันทึกการโยกงบไม่สำเร็จ: "+terr.message); setBusy(false); return; }
+    }
+    // อัปโหลดเอกสารตามช่อง (ติด slot_key) + เอกสารอื่น ๆ + เอกสาร governance
+    const items=[];
+    Object.entries(docs).forEach(([k,arr])=>arr.forEach(f=>items.push({file:f, slot_key:k})));
+    files.forEach(f=>items.push({file:f, slot_key:null}));
+    if(isTravel) trips.forEach((t,i)=>{ if(tripKm(t)>0){
+      if(t.photoOut) items.push({file:t.photoOut, slot_key:"odo_"+(i+1)+"_out"});
+      if(t.photoIn)  items.push({file:t.photoIn,  slot_key:"odo_"+(i+1)+"_in"}); } });
+    if(overBudget && etype==="opex" && memoFile) items.push({file:memoFile, slot_key:"budget_memo"});
+    if(overBudget && etype==="capex" && excomFile) items.push({file:excomFile, slot_key:"excom_approval"});
+    if(items.length){
+      const errs=await uploadAttachments(req.id, uid, items);
+      if(errs.length) setErr("บางไฟล์แนบไม่สำเร็จ: "+errs.join(" · "));
+    }
+    // ลิงก์เอกสารภายนอก (ไฟล์ใหญ่)
+    for(const l of links){ await addLink(req.id, uid, l.url, l.label); }
+    await supabase.from("hub_activity_log").insert({request_id:req.id,actor_id:uid,action:"created",to_status:"new"});
+    const { data:leads }=await supabase.from("hub_team").select("user_id").in("hub_role",["owner","lead","supervisor"]);
+    notifyMany((leads||[]).map(l=>l.user_id),"มีคำขอใหม่เข้ามา",(req.ticket_no||"")+" · "+form.title,"/requests/"+req.id,req.id);
+    router.replace("/requests/"+req.id);
+  }
+  return (<Shell title="เปิดคำขอใหม่">
+    <div className="card" style={{maxWidth:720}}>
+      {err&&<div className="err">{err}</div>}
+      <form onSubmit={submit}>
+        <div className="field"><label>ประเภทงาน *</label>
+          <select value={form.type} onChange={e=>up("type",e.target.value)} required>
+            <option value="">— เลือกหมวด / ประเภทงาน —</option>
+            {groupTypes(types).map(g=>(
+              <optgroup key={g.key} label={g.meta.label}>
+                {g.items.map(t=>(<option key={t.id} value={t.id}>{t.name}{t.incurs_expense?" (มีค่าใช้จ่าย)":""}</option>))}
+              </optgroup>
             ))}
-          </div>
-          <div className="muted" style={{fontSize:11,marginTop:8}}>💡 ลงนามครบแล้วกด <b>Export PDF</b> ด้านบน เพื่อออกเอกสารให้บัญชีทำจ่าย</div>
-        </div>)}
+          </select></div>
+        {sel?.prep_note&&<div style={{background:"#FFF8E6",border:"1px solid #EBD9AE",borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:12.5,color:"#8A5A00",lineHeight:1.7}}>
+          <b>📋 เตรียมให้พร้อมก่อนกรอก</b><br/>{sel.prep_note}
+        </div>}
 
-        {slots.length>0&&(<div className="card">
-          <h2>📎 เช็คลิสต์เอกสาร ({slots.filter(s=>s.required&&bySlot[s.key]?.length).length}/{slots.filter(s=>s.required).length})</h2>
-          <div style={{display:"grid",gap:6}}>
-            {slots.map(s=>{
-              const has=bySlot[s.key]||[];
-              const ok=has.length>0;
-              return (<div key={s.key} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,
-                border:"1px solid "+(ok?"#B7DEC8":s.required?"#F3C9CE":"#E4E7EB"),
-                background:ok?"#F6FBF8":s.required?"#FFFBFB":"#fff"}}>
-                <span style={{fontSize:15}}>{ok?"✅":s.required?"❌":"⬜"}</span>
-                <b style={{fontSize:13,flex:1}}>{s.label}
-                  {s.required&&<span style={{color:"#B03A2E"}}> *</span>}</b>
-                {ok
-                  ? <span style={{display:"flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                      {has.map(a=>(<a key={a.id} href="#" onClick={e=>{e.preventDefault();openAttachment(a.file_path);}}
-                        style={{fontSize:11.5,color:"#2D6CDF",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                        {fileIcon(a.mime_type,a.file_name)} {a.file_name}</a>))}
-                    </span>
-                  : <span className="muted" style={{fontSize:11.5,color:s.required?"#B03A2E":"#98A4AE"}}>
-                      {s.required?"ยังไม่มี":"ไม่บังคับ"}</span>}
-              </div>);
-            })}
-          </div>
-          {noSlot.length>0&&<p className="muted" style={{fontSize:11.5,marginTop:8}}>
-            + เอกสารอื่น ๆ ที่ไม่ได้อยู่ในเช็คลิสต์ {noSlot.length} ไฟล์ (ดูด้านล่าง)</p>}
-        </div>)}
+        <div className="field"><label>หัวข้อ *</label><input value={form.title} onChange={e=>up("title",e.target.value)} required placeholder="สรุปสั้น ๆ ว่าต้องการอะไร"/></div>
 
-        <div className="card">
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <h2 style={{margin:0}}>ไฟล์แนบทั้งหมด ({atts.length})</h2>
-            {canAttach
-              ? <label className="btn sm sec" style={{cursor:"pointer",margin:0}}>
-                  {upBusy?"กำลังอัปโหลด…":"+ แนบไฟล์"}
-                  <input type="file" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv" disabled={upBusy}
-                    onChange={addFiles} style={{display:"none"}}/>
-                </label>
-              : (uid===r.requester_id && <span className="muted" style={{fontSize:11.5}}>🔒 แนบ/ลบไม่ได้ (ถูกมอบหมายแล้ว)</span>)}
-          </div>
-          {canAttach&&<div style={{background:"#F3F8FF",border:"1px solid #C7D9F7",borderRadius:8,padding:"9px 11px",marginBottom:10}}>
-            <div style={{fontSize:12,fontWeight:600,color:"#2453A8",marginBottom:6}}>🔗 แนบลิงก์เอกสารภายนอก (สำหรับไฟล์ใหญ่ — OneDrive / SharePoint / Drive)</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              <input value={linkUrl} onChange={e=>setLinkUrl(e.target.value)} placeholder="วางลิงก์ share ที่นี่ (https://...)" style={{flex:"2 1 240px"}}/>
-              <input value={linkLabel} onChange={e=>setLinkLabel(e.target.value)} placeholder="ชื่อ/คำอธิบาย (ถ้ามี)" style={{flex:"1 1 150px"}}/>
-              <button className="btn sm" disabled={!linkUrl.trim()} onClick={addLinkNow}>+ เพิ่มลิงก์</button>
-            </div>
-            <div className="muted" style={{fontSize:11,marginTop:5}}>💡 ตั้งค่าลิงก์ให้ "ผู้ที่มีลิงก์เปิดดูได้" ก่อนวาง เพื่อให้แอดมินเปิดได้</div>
+        {sel&&<DynForm schema={sel.form_schema} data={fd} onChange={setFd}/>}
+
+        <div className="field"><label>หมายเหตุเพิ่มเติม (ถ้ามี)</label><textarea value={form.detail} onChange={e=>up("detail",e.target.value)} placeholder="ข้อมูลอื่นที่อยากให้ทีมทราบ"/></div>
+        <div className="row2">
+          <div className="field"><label>ความเร่งด่วน</label>
+            <select value={form.priority} onChange={e=>up("priority",e.target.value)}>
+              <option value="low">ต่ำ</option><option value="normal">ปกติ</option><option value="high">สูง</option><option value="urgent">ด่วนมาก</option></select></div>
+          <div className="field"><label>กำหนดส่งที่ต้องการ</label><input type="date" value={form.due} onChange={e=>up("due",e.target.value)}/></div>
+        </div>
+        {needExpense&&<div style={{fontSize:12.5,color:"#2E7D5B",background:"#EAF6EF",border:"1px solid #B7DEC8",borderRadius:8,padding:"7px 11px",marginBottom:10}}>
+          💡 งานที่มีค่าใช้จ่าย: <b>เบิกเข้าโครงการ</b> → เลือกโครงการ · <b>เบิกเข้าแผนก</b> → เว้นโครงการว่าง แล้วเลือกแผนก (อย่างน้อยหนึ่งอย่าง)
+        </div>}
+        <div className="field">
+          <label>โครงการ / รหัสโครงการ <span className="muted" style={{fontWeight:400,fontSize:11}}>(เว้นว่างได้ถ้าเบิกเข้าแผนก)</span></label>
+          <Combobox
+            options={projects.map(p=>({value:p.id, label:(p.code||"")+" · "+(p.name||""), sub:p.name}))}
+            value={form.project} onChange={v=>up("project",v)}
+            placeholder="🔎 พิมพ์รหัส/ชื่อโครงการเพื่อค้นหา"
+            emptyLabel="— ไม่ระบุโครงการ (เบิกเข้าแผนก) —"/>
+          <div className="muted" style={{fontSize:11,marginTop:4}}>ระบุโครงการ = เบิกเข้าโครงการ + ส่งงานให้ <b>เจ้าประจำโครงการ</b> · เว้นว่าง = เบิกเข้าแผนก</div>
+        </div>
+        <div className="field">
+          <label>แผนก (สำหรับจ่ายงาน)</label>
+          <select value={form.department} onChange={e=>up("department",e.target.value)}>
+            <option value="">— ตามแผนกของฉัน (อัตโนมัติ) —</option>
+            {depts.map(d=>(<option key={d.code} value={d.code}>{d.code} · {d.name}</option>))}
+          </select>
+          <div className="muted" style={{fontSize:11,marginTop:4}}>ถ้าไม่ระบุโครงการ ระบบจะส่งงานให้ <b>เจ้าประจำแผนก</b> · เว้นว่าง = ใช้แผนกของผู้ขอ</div>
+        </div>
+
+        {needExpense&&(<div style={{background:"#E4F3EA",border:"1px solid #B7DEC8",borderRadius:10,padding:14,marginBottom:14}}>
+          <div style={{fontWeight:700,color:"#2E7D5B",marginBottom:10}}>ค่าใช้จ่ายโครงการ</div>
+          {skipBudget&&<div style={{fontSize:12,color:"#2453A8",background:"#EEF4FF",border:"1px solid #C7D9F7",borderRadius:8,padding:"8px 11px",marginBottom:10}}>
+            ℹ️ งานนี้เป็นการ<b>ตั้งเบิกตามที่ผูกงบไว้แล้ว</b> (เช่น วางบิลตาม WO) ระบบจะ<b>ไม่เช็ค/ไม่ตัดงบซ้ำ</b> เพราะงบถูกกันไว้ตั้งแต่ขั้นเปิด PR/PO/WO แล้ว
           </div>}
-          {atts.length===0&&<div className="muted" style={{fontSize:13}}>ยังไม่มีไฟล์แนบ</div>}
-          <div style={{display:"grid",gap:6}}>
-            {atts.map(a=>{ const canDel = canManage || (a.uploaded_by===uid && (staff || r.status==="new")); const th=thumbs[a.file_path];
-              return (<div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,background:"#F6F7F9",border:"1px solid #E4E7EB",borderRadius:8,padding:"8px 12px"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-                {th
-                  ? <img src={th} alt={a.file_name} onClick={()=>openAttachment(a.file_path)}
-                      style={{width:52,height:52,objectFit:"cover",borderRadius:6,border:"1px solid #DDE3E8",cursor:"pointer",flexShrink:0,background:"#fff"}}/>
-                  : <div style={{width:52,height:52,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,borderRadius:6,border:"1px solid #DDE3E8",background:"#fff",flexShrink:0}}>{isLink(a)?"🔗":fileIcon(a.mime_type)}</div>}
-                <div style={{fontSize:13,minWidth:0}}>
-                  {a.slot_key&&<div><span className="tag" style={{fontSize:10,background:"#EEF4FF",color:"#2D6CDF",borderColor:"#C7D9F7"}}>
-                    {slotLabel[a.slot_key]||(String(a.slot_key).startsWith("odo_")?("รูปเลขไมล์ "+odoLabel(a.slot_key)):a.slot_key)}</span></div>}
-                  <b style={{wordBreak:"break-all"}}>{a.file_name}</b>
-                  <div className="muted" style={{fontSize:11,marginTop:2}}>{isLink(a)?"🔗 ลิงก์ภายนอก":fmtSize(a.size_bytes)} · {a.uploader?.full_name||"—"} · {fmtDate(a.created_at)}</div>
-                </div>
-              </div>
-              <div style={{display:"flex",gap:6,flexShrink:0}}>
-                <button className="btn sm" onClick={async()=>{ if(isLink(a)){ openLink(a.file_url); return; } const ok=await openAttachment(a.file_path); if(!ok) setMsg("เปิดไฟล์ไม่สำเร็จ (ไม่มีสิทธิ์ หรือไฟล์หาย)"); }}>{isLink(a)?"เปิดลิงก์":"เปิด"}</button>
-                {canDel&&<button className="btn sm sec" style={{color:"#B03A2E"}} onClick={()=>removeFile(a)}>ลบ</button>}
-              </div>
-            </div>); })}
-          </div>
-        </div>
-
-        {canRate&&(<div className="card">
-          <h2>ประเมินความพึงพอใจ (CSAT)</h2>
-          {r.csat_rating?(
-            <div className="muted">ให้คะแนนแล้ว: <span style={{color:"#F5A623",fontSize:18}}>{"★".repeat(r.csat_rating)}{"☆".repeat(5-r.csat_rating)}</span>{r.csat_comment?(" · "+r.csat_comment):""}</div>
-          ):(<>
-            <div style={{fontSize:30,letterSpacing:6,userSelect:"none"}}>
-              {[1,2,3,4,5].map(n=>(<span key={n} onClick={()=>setCs(n)} style={{cursor:"pointer",color:n<=cs?"#F5A623":"#D0D6DC"}}>★</span>))}
+          <div className="field"><label>ประเภทงบ * <span className="muted" style={{fontWeight:400,fontSize:11}}>(เลือกก่อนกรอกจำนวนเงิน)</span></label>
+            <div style={{display:"flex",gap:8}}>
+              {[["opex","Opex — ดำเนินงาน"],["capex","Capex — ลงทุน"]].map(([v,l])=>(
+                <label key={v} style={{flex:1,display:"flex",alignItems:"center",gap:6,cursor:"pointer",
+                  border:"1px solid "+(etype===v?"#2E7D5B":"#CBD8D0"),background:etype===v?"#EAF6EF":"#fff",
+                  borderRadius:8,padding:"8px 10px",fontSize:13,fontWeight:etype===v?700:400}}>
+                  <input type="radio" name="etype" checked={etype===v} onChange={()=>setEtype(v)}/>{l}
+                </label>))}
             </div>
-            <textarea placeholder="ความคิดเห็นเพิ่มเติม (ถ้ามี)" value={cc} onChange={e=>setCc(e.target.value)} style={{marginTop:8}}/>
-            <button className="btn sm" disabled={!cs} onClick={submitCsat} style={{marginTop:6}}>ส่งคะแนน</button>
-          </>)}
-        </div>)}
-
-        {exp.length>0&&(<div className="card"><h2>💰 ค่าใช้จ่าย & การอนุมัติ</h2>
-          <p className="muted" style={{fontSize:12,marginTop:-4,lineHeight:1.8}}>
-            ไม่เกิน <b>{fmtMoney(threshold)}</b> → Supervisor อนุมัติจบ ·
-            เกิน <b>{fmtMoney(threshold)}</b> → Supervisor ตรวจก่อน แล้ว<b>ส่งต่อ Owner</b>
-          </p>
-          {expErr&&<div className="err">{expErr}</div>}
-          <table><thead><tr>
-            <th>โครงการ</th><th>Cost Code</th><th className="right">จำนวนเงิน</th>
-            <th>สถานะอนุมัติ</th><th className="right">การดำเนินการ</th>
-          </tr></thead>
-          <tbody>{exp.map(x=>{
-            const st=x.approval_status;
-            const over=Number(x.amount)>threshold;
-            const canAct = (st==="pending_supervisor" && (role==="owner"||role==="supervisor"))
-                        || (st==="pending_owner" && role==="owner");
-            const myLines=expLines.filter(L=>L.entry_id===x.id);
-            return (<Fragment key={x.id}><tr>
-              <td>{x.projects?<span>{x.projects.code} · {x.projects.name}</span>:<span className="muted">—</span>}</td>
-              <td>{x.hub_cost_codes?x.hub_cost_codes.code:(myLines.length?<span className="muted">{myLines.length} cost</span>:"—")}</td>
-              <td className="right"><b>{fmtMoney(x.amount)}</b>
-                {over&&<div style={{fontSize:10.5,color:"#B26A00"}}>เกินวงเงิน</div>}</td>
-              <td>
-                <span className="tag" style={APV_STYLE[st]||{}}>{APV_TH[st]||st}</span>
-                {x.supervisor_at&&<div className="muted" style={{fontSize:10.5,marginTop:3}}>
-                  Sup: {names[x.supervisor_by]||"—"} · {fmtDate(x.supervisor_at)}</div>}
-                {x.owner_at&&<div className="muted" style={{fontSize:10.5}}>
-                  Owner: {names[x.owner_by]||"—"} · {fmtDate(x.owner_at)}</div>}
-                {x.reject_reason&&<div style={{fontSize:10.5,color:"#B03A2E"}}>เหตุผล: {x.reject_reason}</div>}
-                {st==="approved"&&x.posted_to_erp&&<div style={{fontSize:10.5,color:"#2E7D5B",marginTop:3}}>🧾 คีย์เข้า ERP แล้ว</div>}
-              </td>
-              <td className="right">
-                {canAct ? (<div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
-                  <button className="btn sm" disabled={apvBusy===x.id} onClick={()=>decide(x,"approve")}>
-                    {apvBusy===x.id?"…":(st==="pending_owner"?"✅ อนุมัติ (Owner)":"✅ อนุมัติ")}
-                  </button>
-                  <button className="btn sm sec" style={{color:"#B03A2E"}} disabled={apvBusy===x.id}
-                    onClick={()=>decide(x,"reject")}>ไม่อนุมัติ</button>
-                </div>)
-                : st==="pending_owner" ? <span className="muted" style={{fontSize:11.5}}>รอ Owner</span>
-                : st==="pending_supervisor" ? <span className="muted" style={{fontSize:11.5}}>รอ Supervisor</span>
-                : st==="approved" && canManage ? (
-                    <button className="btn sm sec" disabled={apvBusy===x.id}
-                      onClick={()=>markPosted(x)}
-                      title="ทำเครื่องหมายว่าคีย์เข้า ERP แล้ว เพื่อกันนับซ้ำในงบ"
-                      style={x.posted_to_erp?{color:"#2E7D5B",borderColor:"#B7DEC8"}:{}}>
-                      {apvBusy===x.id?"…":(x.posted_to_erp?"🧾 ลง ERP แล้ว ✓":"ทำเครื่องหมายลง ERP")}
-                    </button>)
-                : <span className="muted">—</span>}
-              </td>
-            </tr>
-            {myLines.length>0&&<tr><td colSpan="5" style={{background:"#F7FAF8",padding:"6px 10px 10px 20px"}}>
-              <div style={{fontSize:11.5,fontWeight:700,color:"#2E7D5B",margin:"2px 0 5px"}}>💵 รายการย่อย (Clear Advance)</div>
-              <table style={{fontSize:12,margin:0}}><tbody>
-              {myLines.map(L=>(<tr key={L.id}>
-                <td className="mono" style={{width:"28%"}}>{L.hub_cost_codes?L.hub_cost_codes.code+" · "+L.hub_cost_codes.name:"—"}</td>
-                <td className="muted">{L.description||"—"}</td>
-                <td className="right" style={{width:120}}><b>{fmtMoney(L.amount)}</b></td>
-              </tr>))}
-              <tr style={{borderTop:"1px solid #DDE6E0",fontWeight:700}}>
-                <td colSpan="2" className="right">รวม</td>
-                <td className="right">{fmtMoney(myLines.reduce((s,L)=>s+(Number(L.amount)||0),0))}</td>
-              </tr>
-              </tbody></table>
-            </td></tr>}
-            </Fragment>);
-          })}</tbody></table></div>)}
-        <div className="card"><h2>Timeline</h2>
-          {log.map(l=>(<div key={l.id} style={{padding:"7px 0",borderBottom:"1px solid #EEF1F3",fontSize:13}}>
-            <b>{l.action}</b> {l.from_status&&l.to_status&&<span className="muted">{l.from_status} → {l.to_status}</span>} {l.note&&<span> · {l.note}</span>}
-            <div className="muted" style={{fontSize:11}}>{l.actor?.full_name||"ระบบ"} · {fmtDate(l.created_at)}</div></div>))}
-          {!log.length&&<div className="muted">—</div>}
-        </div>
-      </div>
-      <div>
-        <div className="card"><h2>การดำเนินการ</h2>
-          {!staff&&<div className="muted">เฉพาะทีม Hub เท่านั้นที่จัดการได้</div>}
-          {staff&&<>
-            {canAssign&&!r.assignee_id&&(r.suggested_assignee_id
-              ? <div style={{background:"#EEF4FF",border:"1px solid #C7D9F7",borderRadius:10,padding:"10px 12px",marginBottom:12}}>
-                  <div style={{fontSize:12,color:"#2D6CDF",fontWeight:700,marginBottom:2}}>🤖 ระบบแนะนำ</div>
-                  <div style={{fontSize:14,fontWeight:700,color:"#202028"}}>{r.suggested?.full_name}</div>
-                  <div className="muted" style={{fontSize:11,marginTop:2}}>{r.suggested_reason}</div>
-                  <button className="btn sm" style={{width:"100%",marginTop:8}} onClick={doAssignSuggested}>✓ มอบหมายตามคำแนะนำ</button>
-                </div>
-              : <div style={{background:"#FBF1DE",border:"1px solid #EBD9AE",borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:12.5,color:"#9A5B00"}}>
-                  ⚠ ระบบไม่มีคำแนะนำสำหรับงานนี้ (ยังไม่ตั้งเจ้าประจำ หรือเจ้าประจำ/ตัวสำรองลา) — กรุณาเลือกผู้รับผิดชอบเอง
-                </div>)}
-
-            {canAssign&&<>
-              <div className="field"><label>มอบหมายให้</label>
-                <select value={assignee} onChange={e=>setAssignee(e.target.value)}>
-                  <option value="">— เลือกสมาชิก —</option>
-                  {team.map(m=>(<option key={m.profiles?.id} value={m.profiles?.id}>{m.profiles?.full_name}{["owner","lead"].includes(m.hub_role)?" (Lead)":m.hub_role==="supervisor"?" (Sup.)":""}</option>))}</select></div>
-              <button className="btn sm" style={{marginBottom:10,width:"100%"}} disabled={!assignee} onClick={doAssign}>มอบหมาย</button>
-            </>}
-
-            {active&&(canAssign||isAssignee)&&(()=>{
-              const hasResult=atts.some(a=>a.slot_key==="result"||(a.mime_type||"").includes("pdf"));
-              return (<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                <button className="btn sm sec" onClick={doStart}>เริ่มทำ</button>
-                <button className="btn sm sec" onClick={doWaiting}>รอข้อมูล</button>
-                {/* แนบไฟล์ผลงาน (PDF) ก่อนส่งตรวจ */}
-                <label className="btn sm sec" style={{gridColumn:"1 / span 2",cursor:"pointer",margin:0,
-                  borderColor:hasResult?"#B7DEC8":"#EBD9AE",background:hasResult?"#F6FBF8":"#FFF8E6"}}>
-                  {upBusy?"กำลังอัปโหลด…":hasResult?"✅ แนบผลงานแล้ว — แนบเพิ่ม":"📎 แนบผลงาน (PDF) ก่อนส่งตรวจ *"}
-                  <input type="file" multiple accept=".pdf,image/*" disabled={upBusy} onChange={addResult} style={{display:"none"}}/>
-                </label>
-                <button className="btn sm" style={{gridColumn:"1 / span 2"}} disabled={!hasResult} onClick={doSubmit}
-                  title={hasResult?"":"ต้องแนบผลงาน (PDF) ก่อน"}>
-                  {hasResult?"ส่งตรวจ ✓":"🔒 ส่งตรวจ (แนบ PDF ก่อน)"}
-                </button>
-              </div>);
-            })()}
-
-            {/* ยกเลิกมอบหมาย → เปิดให้ผู้ขอกลับมาแก้ไข */}
-            {canAssign&&r.assignee_id&&["assigned","in_progress","waiting"].includes(r.status)&&(
-              <div style={{marginTop:10,paddingTop:10,borderTop:"1px dashed #E4E7EB"}}>
-                <button className="btn sm sec" style={{width:"100%",color:"#B03A2E"}} onClick={doUnassign}>
-                  ↩ ยกเลิกมอบหมาย (เปิดให้ผู้ขอแก้ไข)
-                </button>
-                <div className="muted" style={{fontSize:11,marginTop:4,lineHeight:1.6}}>
-                  งานจะกลับเป็น "ใหม่" · ผู้ขอกลับมาแก้ไข/เพิ่มเอกสาร แล้วส่งอีกครั้ง
-                </div>
-              </div>)}
-
-            {r.status==="review"&&<div style={{marginTop:4}}>
-              {canAssign?<>
-                <div className="muted" style={{fontSize:12,marginBottom:8}}>ตรวจความถูกต้องก่อนปิดงาน</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                  <button className="btn sm" onClick={doApprove}>อนุมัติ/ปิดงาน</button>
-                  <button className="btn sm sec" onClick={doReject}>ตีกลับ</button>
-                </div>
-              </>:<div className="muted" style={{fontSize:13}}>⏳ ส่งตรวจแล้ว — รอหัวหน้าทีมอนุมัติ</div>}
-            </div>}
-
-            {r.status==="closed"&&<div className="muted" style={{fontSize:13}}>✓ ปิดงานแล้ว</div>}
-            {!canAssign&&!isAssignee&&active&&<div className="muted" style={{fontSize:13}}>ยังไม่ได้รับมอบหมายงานนี้</div>}
-
-            {canManage&&<div style={{marginTop:14,paddingTop:12,borderTop:"1px dashed #E4E7EB"}}>
-              <button className="btn sm sec" style={{width:"100%",color:"#B03A2E",borderColor:"#F0B7BC"}}
-                onClick={doDeleteRequest}>🗑 ลบคำขอถาวร</button>
-              <div className="muted" style={{fontSize:11,marginTop:4,lineHeight:1.6}}>
-                ลบไฟล์แนบใน storage ก่อน แล้วจึงลบคำขอ · กู้คืนไม่ได้
+          </div>
+          {isTravel ? (
+          <>
+            <div className="field"><label>Cost Code (ERP)</label>
+              <Combobox options={codes.map(c=>({value:c.id,label:c.code+" · "+c.name,sub:c.name}))}
+                value={form.cost} onChange={v=>up("cost",v)}
+                placeholder="🔎 พิมพ์รหัส/ชื่อ cost code" emptyLabel="— เลือก —" searchPlaceholder="🔎 พิมพ์รหัส/ชื่อ cost code"/></div>
+            <div className="field">
+              <label>รายละเอียดการเดินทาง (สูงสุด 8 เที่ยว) · อัตรา {RATE_KM} บาท/กม. *</label>
+              <div style={{overflowX:"auto",border:"1px solid #CFE3D6",borderRadius:8}}>
+              <table style={{margin:0,fontSize:11.5,minWidth:940}}><thead><tr style={{background:"#F0F7F2"}}>
+                <th style={{width:26}}>#</th><th style={{width:120}}>วันที่</th><th>ปลายทาง/วัตถุประสงค์</th>
+                <th style={{width:78}}>ไมล์ไป</th><th style={{width:78}}>ไมล์กลับ</th><th style={{width:52}}>กม.</th>
+                <th style={{width:82}}>Maps(กม.)</th><th style={{width:96}}>สถานะ</th><th className="right" style={{width:80}}>เงิน</th><th style={{width:120}}>รูปไมล์ (ไป/กลับ)</th><th style={{width:26}}></th>
+              </tr></thead><tbody>
+              {trips.map((t,i)=>{ const km=tripKm(t); const d=tripDiff(t); const over=tripOver(t); return (<Fragment key={i}>
+                <tr>
+                  <td style={{textAlign:"center"}}>{i+1}</td>
+                  <td><input type="date" value={t.date} onChange={e=>setTrip(i,"date",e.target.value)} style={{width:"100%"}}/></td>
+                  <td><input value={t.dest} onChange={e=>setTrip(i,"dest",e.target.value)} placeholder="เช่น ไซต์งาน / ลูกค้า" style={{width:"100%"}}/></td>
+                  <td><input type="number" value={t.odoOut} onChange={e=>setTrip(i,"odoOut",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
+                  <td><input type="number" value={t.odoIn} onChange={e=>setTrip(i,"odoIn",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
+                  <td style={{textAlign:"right",fontWeight:700}}>{km||"-"}</td>
+                  <td><input type="number" value={t.mapsKm} onChange={e=>setTrip(i,"mapsKm",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
+                  <td style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:over?"#B03A2E":(d!==null?"#2E7D5B":"#98A4AE")}}>{d===null?"รอ Maps":over?("⚠ เกิน "+d):"✓ ปกติ"}</td>
+                  <td style={{textAlign:"right"}}>{km?fmtMoney(km*RATE_KM):"-"}</td>
+                  <td style={{textAlign:"center",whiteSpace:"nowrap"}}>
+                    <label className="btn sm sec" style={{cursor:"pointer",fontSize:10,padding:"2px 5px",display:"inline-block",marginRight:3,borderColor:t.photoOut?"#B7DEC8":undefined,color:t.photoOut?"#2E7D5B":undefined}} title={t.photoOut?("ขาไป: "+t.photoOut.name):"รูปเลขไมล์ ขาไป (ก่อนออก)"}>
+                      {t.photoOut?"✓ไป":"📎ไป"}<input type="file" accept="image/*" style={{display:"none"}} onChange={e=>setTrip(i,"photoOut",e.target.files?.[0]||null)}/></label>
+                    <label className="btn sm sec" style={{cursor:"pointer",fontSize:10,padding:"2px 5px",display:"inline-block",borderColor:t.photoIn?"#B7DEC8":undefined,color:t.photoIn?"#2E7D5B":undefined}} title={t.photoIn?("ขากลับ: "+t.photoIn.name):"รูปเลขไมล์ ขากลับ (เมื่อถึง)"}>
+                      {t.photoIn?"✓กลับ":"📎กลับ"}<input type="file" accept="image/*" style={{display:"none"}} onChange={e=>setTrip(i,"photoIn",e.target.files?.[0]||null)}/></label>
+                  </td>
+                  <td style={{textAlign:"center"}}>{trips.length>1&&<button type="button" onClick={()=>rmTrip(i)} style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}</td>
+                </tr>
+                {over&&<tr><td></td><td colSpan="10" style={{paddingBottom:6}}>
+                  <input value={t.reason} onChange={e=>setTrip(i,"reason",e.target.value)} placeholder="⚠ ระยะเกิน Maps — ระบุเหตุผล/จุดแวะ (บังคับ)"
+                    style={{width:"100%",borderColor:"#B03A2E",fontSize:11}}/></td></tr>}
+              </Fragment>); })}
+              </tbody>
+              <tfoot><tr style={{borderTop:"2px solid #DDE6E0",fontWeight:700,background:"#FAFDFB"}}>
+                <td colSpan="5"><button type="button" onClick={addTrip} className="btn sm sec" style={{fontSize:12}} disabled={trips.length>=8}>+ เพิ่มเที่ยว</button></td>
+                <td style={{textAlign:"right"}}>{travelKm||"-"}</td><td></td><td></td><td className="right" style={{color:"#2E7D5B"}}>{fmtMoney(travelTotal)}</td><td colSpan="2"></td>
+              </tr></tfoot></table>
               </div>
+              {trips.some(tripOver)&&<div style={{fontSize:11.5,color:"#B03A2E",fontWeight:700,marginTop:5}}>⚠ มีเที่ยวที่ระยะสูงกว่า Google Maps เกิน {MAPS_TOL} กม. — ต้องระบุเหตุผล/จุดแวะในแถวสีแดง</div>}
+              <div className="muted" style={{fontSize:11,marginTop:4}}>ระยะ = ไมล์กลับ − ไมล์ไป · เงิน = ระยะ × {RATE_KM} บาท · <b>ต้องแนบรูปเลขไมล์ 2 รูปทุกเที่ยว: ขาไป (ก่อนออก) + ขากลับ (เมื่อถึง)</b></div>
+            </div>
+          </>
+          ) : useLines ? (
+          <div className="field">
+            {!isAdvance&&<label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontWeight:400,color:"#20232A",marginBottom:8}}>
+              <input type="checkbox" checked={multiCost} onChange={e=>setMultiCost(e.target.checked)} style={{width:"auto",margin:0}}/>
+              แยกหลาย Cost Code (ค่าอุปกรณ์ + ค่าเดินทาง + อื่นๆ ในใบเดียว)</label>}
+            <label>{isAdvance?"รายการค่าใช้จ่าย (Clear Advance — ใส่ได้หลาย Cost) *":"รายการค่าใช้จ่าย (แยกหลาย Cost Code) *"}</label>
+            <div style={{marginBottom:6}}>
+              <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBillsAdvance} style={{borderColor:"#2453A8",color:"#2453A8"}}>
+                {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดหลายบิล (ไฟล์ใบปะหน้า+บิล → แตกหลายบรรทัดให้)"}
+              </button>
+              <div className="muted" style={{fontSize:10.5,marginTop:2}}>รองรับไฟล์เดียวที่มีใบปะหน้า+บิลจริงหลายใบ (หรือเลือกหลายไฟล์) · 1 บิล = 1 บรรทัด · ยอด/รายละเอียดเติมให้ · จับคู่ Cost Code จากใบปะหน้าอัตโนมัติ (ตรวจซ้ำก่อนส่ง)</div>
+            </div>
+            <div style={{border:"1px solid #CFE3D6",borderRadius:8,overflow:"visible"}}>
+              <table style={{margin:0,fontSize:12.5}}><thead><tr style={{background:"#F0F7F2"}}>
+                <th style={{width:"34%"}}>Cost Code</th><th>รายละเอียด</th>
+                <th className="right" style={{width:130}}>จำนวนเงิน</th><th style={{width:34}}></th>
+              </tr></thead><tbody>
+              {advLines.map((l,i)=>{
+                if(l.refund){ return (<tr key={i} style={{background:"#FFF7EC"}}>
+                  <td style={{color:"#B26A00",fontSize:12,fontWeight:700,verticalAlign:"top"}}>🔁 เงินคืน Advance
+                    <div style={{fontWeight:400,fontSize:10.5,color:"#9A7B4F",marginTop:2}}>ไม่มี Cost Code · ไม่ตัดงบ · ต้องแนบสลิปโอนเงิน</div></td>
+                  <td><input value={l.note} onChange={e=>setLine(i,"note",e.target.value)} placeholder="เช่น โอนคืนเงินสดคงเหลือ" style={{width:"100%"}}/></td>
+                  <td><input type="number" value={l.amount} onChange={e=>setLine(i,"amount",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
+                  <td style={{textAlign:"center",whiteSpace:"nowrap"}}>
+                    <label className="btn sm sec" style={{cursor:"pointer",fontSize:11,padding:"1px 4px",display:"inline-block",marginRight:3,...(l.slip?{borderColor:"#2E7D5B",color:"#2E7D5B"}:{})}} title={l.slip?"แนบสลิปแล้ว — คลิกเพื่อเปลี่ยน":"แนบสลิปโอนเงิน (mobile banking)"}>{l.slip?"✅":"📎"}
+                      <input type="file" accept="image/*,application/pdf,.pdf" style={{display:"none"}} onChange={e=>{ const f=e.target.files&&e.target.files[0]; e.target.value=""; attachSlip(i,f); }}/></label>
+                    {advLines.length>1&&<button type="button" onClick={()=>rmLine(i)} title="ลบบรรทัด" style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}
+                  </td>
+                </tr>); }
+                const cc=l.cost?ccMap[l.cost]:null; const isOver=overCost.has(l.cost); return (<tr key={i}>
+                <td><Combobox options={codes.map(c=>({value:c.id,label:c.code+" · "+c.name,sub:c.name}))}
+                  value={l.cost} onChange={v=>setLine(i,"cost",v)}
+                  placeholder="🔎 cost code" emptyLabel="— เลือก —" searchPlaceholder="🔎 พิมพ์รหัส/ชื่อ cost code"/>
+                  {cc&&cc.has_budget&&<div style={{fontSize:10.5,marginTop:3,fontWeight:isOver?700:400,color:isOver?"#B03A2E":"#6B7A72"}}>{isOver?"⛔ ":""}งบเหลือ {fmtMoney(cc.remaining)}</div>}</td>
+                <td><input value={l.note} onChange={e=>setLine(i,"note",e.target.value)} placeholder="เช่น ค่าเดินทาง..." style={{width:"100%"}}/></td>
+                <td><input type="number" value={l.amount} onChange={e=>setLine(i,"amount",e.target.value)} placeholder="0"
+                  style={{width:"100%",textAlign:"right",...(isOver?{borderColor:"#B03A2E",boxShadow:"0 0 0 2px rgba(176,58,46,.12)"}:{})}}/></td>
+                <td style={{textAlign:"center",whiteSpace:"nowrap"}}>
+                  <label className="btn sm sec" style={{cursor:"pointer",fontSize:11,padding:"1px 4px",display:"inline-block",marginRight:3}} title="ถอดบิลใส่บรรทัดนี้">📷
+                    <input type="file" accept="image/*,application/pdf,.pdf" style={{display:"none"}} onChange={e=>{ const f=e.target.files&&e.target.files[0]; e.target.value=""; extractBillLine(i,f); }}/></label>
+                  {advLines.length>1&&<button type="button" onClick={()=>rmLine(i)} title="ลบบรรทัด" style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}
+                </td>
+              </tr>); })}
+              </tbody>
+              <tfoot>
+                <tr style={{borderTop:"2px solid #DDE6E0",background:"#FAFDFB"}}>
+                  <td colSpan="2" style={{padding:"6px 8px"}}>
+                    <button type="button" onClick={addLine} className="btn sm sec" style={{fontSize:12,marginRight:6}}>+ เพิ่มบรรทัดค่าใช้จ่าย</button>
+                    {isAdvance&&<button type="button" onClick={addRefund} className="btn sm sec" style={{fontSize:12,borderColor:"#B26A00",color:"#B26A00"}}>+ เพิ่มรายการเงินคืน</button>}
+                  </td>
+                  <td className="right" style={{fontWeight:700,color:advOver?"#B03A2E":"#2E7D5B"}}>ค่าใช้จ่าย {fmtMoney(advExpense)}</td><td></td>
+                </tr>
+                {advRefund>0&&<tr style={{background:"#FAFDFB"}}>
+                  <td colSpan="2" style={{fontSize:11.5,color:"#9A7B4F",paddingLeft:8}}>หัก เงินคืน Advance (โอนคืน)</td>
+                  <td className="right" style={{fontWeight:700,color:"#B26A00"}}>− {fmtMoney(advRefund)}</td><td></td>
+                </tr>}
+                {advRefund>0&&<tr style={{background:"#F0F7F2",borderTop:"1px dashed #CFE3D6"}}>
+                  <td colSpan="2" style={{fontSize:11.5,color:"#3A5A48",fontWeight:700,paddingLeft:8}}>รวมเคลียร์ (ค่าใช้จ่าย + เงินคืน = ยอด Advance ที่รับมา)</td>
+                  <td className="right" style={{fontWeight:800,color:"#2E7D5B"}}>{fmtMoney(advExpense+advRefund)}</td><td></td>
+                </tr>}
+              </tfoot></table>
+            </div>
+            {advOver&&<div style={{marginTop:6,background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:8,padding:"9px 12px"}}>
+              <div style={{fontSize:12,color:"#B03A2E",fontWeight:800}}>⛔ งบไม่พอราย Cost Code — แก้ไขให้อยู่ในงบ ไม่งั้นต้องเริ่มกระบวนการใหม่ทั้งหมด</div>
+              <ul style={{margin:"5px 0 0",paddingLeft:18,fontSize:11.5,color:"#7A3B34",lineHeight:1.7}}>
+                {advOverList.map(([cid,sum])=>{ const c=codes.find(x=>x.id===cid); const cc=ccMap[cid];
+                  return <li key={cid}><b>{c?.code}</b> — เบิก {fmtMoney(sum)} · งบเหลือ {fmtMoney(cc.remaining)} <b style={{color:"#B03A2E"}}>(เกิน {fmtMoney(sum-cc.remaining)})</b></li>; })}
+              </ul>
             </div>}
-          </>}
+          </div>
+          ) : (
+          <>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontWeight:400,color:"#20232A",marginBottom:8,fontSize:13}}>
+            <input type="checkbox" checked={multiCost} onChange={e=>setMultiCost(e.target.checked)} style={{width:"auto",margin:0}}/>
+            แยกหลาย Cost Code (เช่น ค่าอุปกรณ์ + ค่าเดินทาง + อื่นๆ ในใบเดียว)
+          </label>
+          <div className="row2">
+            <div className="field"><label>Cost Code (ERP)</label>
+              <Combobox options={codes.map(c=>({value:c.id,label:c.code+" · "+c.name,sub:c.name}))}
+                value={form.cost} onChange={v=>up("cost",v)}
+                placeholder="🔎 พิมพ์รหัส/ชื่อ cost code" emptyLabel="— เลือก —"
+                searchPlaceholder="🔎 พิมพ์รหัส/ชื่อ cost code"/></div>
+            <div className="field"><label>จำนวนเงิน (บาท){fxOn&&fxThb>0&&<span style={{color:"#2E7D5B",fontWeight:400}}> · คิดจากอัตราแลกเปลี่ยนแล้ว</span>}</label>
+              <input type="number" value={form.amount} onChange={e=>up("amount",e.target.value)} placeholder="0" readOnly={fxOn&&fxThb>0}
+                style={overBudget?{borderColor:"#B03A2E",boxShadow:"0 0 0 3px rgba(176,58,46,.12)"}:(fxOn&&fxThb>0?{background:"#F0F9F3"}:undefined)}/>
+              {overBudget&&<div style={{fontSize:11.5,color:"#B03A2E",fontWeight:700,marginTop:4}}>
+                🚫 เกินงบคงเหลือ {fmtMoney(amt-Number(bud.left))}</div>}
+            </div>
+          </div>
+          <div style={{marginTop:6}}>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontWeight:400,color:"#20232A",fontSize:12.5}}>
+              <input type="checkbox" checked={fxOn} onChange={e=>setFxOn(e.target.checked)} style={{width:"auto",margin:0}}/>
+              บิลเป็นสกุลต่างประเทศ — คิดอัตราแลกเปลี่ยนเป็นบาทอัตโนมัติ
+            </label>
+            {fxOn&&<div style={{marginTop:6,background:"#FFF9F0",border:"1px solid #EBD9AE",borderRadius:8,padding:"10px 12px"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1.3fr 1.3fr",gap:8}}>
+                <div><label style={{fontSize:11.5,color:"#5A4A20"}}>สกุลเงิน</label>
+                  <input value={fx.cur} onChange={e=>setFx(v=>({...v,cur:e.target.value.toUpperCase()}))} placeholder="USD" style={{width:"100%",textTransform:"uppercase"}}/></div>
+                <div><label style={{fontSize:11.5,color:"#5A4A20"}}>ยอดสกุลต่างประเทศ</label>
+                  <input type="number" value={fx.amt} onChange={e=>setFx(v=>({...v,amt:e.target.value}))} placeholder="0.00" style={{width:"100%",textAlign:"right"}}/></div>
+                <div><label style={{fontSize:11.5,color:"#5A4A20"}}>อัตราแลกเปลี่ยน (บาท/หน่วย)</label>
+                  <input type="number" value={fx.rate} onChange={e=>setFx(v=>({...v,rate:e.target.value}))} placeholder="เช่น 34.50" style={{width:"100%",textAlign:"right",...(!(Number(fx.rate)>0)&&Number(fx.amt)>0?{borderColor:"#B26A00"}:{})}}/></div>
+              </div>
+              <div style={{marginTop:8,fontSize:13,fontWeight:800,color:fxThb>0?"#2E7D5B":"#8A5A00"}}>
+                {fxThb>0 ? "= "+fmtMoney(fxThb)+" บาท  →  ใส่ในช่องจำนวนเงินให้แล้ว ✓" : "กรอกยอดสกุลต่างประเทศ + อัตราแลกเปลี่ยน เพื่อคิดเป็นบาท"}
+              </div>
+              <div className="muted" style={{fontSize:10.5,marginTop:2}}>ระบบตัดงบด้วย "ยอดบาท" ที่คำนวณได้ · โปรดระบุอัตราแลกเปลี่ยนตามที่ตกลง (เช่น เรตซื้อธนาคาร ณ วันเปิด PR)</div>
+            </div>}
+          </div>
+          </>
+          )}
+          {needExpense&&!isTravel&&!useLines&&(<div style={{marginTop:8}}>
+            {isEnt
+              ? <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractEntBills} style={{borderColor:"#2453A8",color:"#2453A8"}}>
+                  {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดหลายบิล — ค่ารับรอง (เลือกได้หลายไฟล์ · รวมยอดให้)"}
+                </button>
+              : <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBill} style={{borderColor:"#2453A8",color:"#2453A8"}}>
+                  {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดข้อมูลจากบิล (รูป/PDF)"}
+                </button>}
+            {ocr&&Array.isArray(ocr.items)&&ocr.items.length>0&&(<div style={{marginTop:6,background:"#FFFBEB",border:"1px solid #EBD9AE",borderRadius:8,padding:"8px 11px",fontSize:12}}>
+              <div style={{fontWeight:700,color:"#8A5A00",marginBottom:3}}>🟡 ถอดได้ {ocr.items.length} ใบ · รวม {fmtMoney(ocr.items.reduce((s,it)=>s+(Number(it.amount)||0),0))} บาท — ตรวจก่อนส่ง</div>
+              <div style={{color:"#5A4A20",lineHeight:1.7}}>
+                {ocr.items.map((it,i)=>(<div key={i}>{i+1}. {it.name||"—"}{it.date?(" · "+it.date):""} · <b>{fmtMoney(it.amount)}</b></div>))}
+              </div>
+              <div className="muted" style={{fontSize:10.5,marginTop:3}}>รวมยอดใส่ช่อง "จำนวนเงิน" + แนบรูปให้แล้ว · รายการจะขึ้นในใบขอเบิกค่ารับรอง (PDF)</div>
+            </div>)}
+            {ocr&&!Array.isArray(ocr.items)&&<div style={{marginTop:6,background:"#FFFBEB",border:"1px solid #EBD9AE",borderRadius:8,padding:"8px 11px",fontSize:12}}>
+              <div style={{fontWeight:700,color:"#8A5A00",marginBottom:3}}>🟡 ข้อมูลจากบิล — โปรดตรวจสอบก่อนส่ง{ocr.confidence!=null&&<span style={{fontWeight:400}}> (ความมั่นใจ {Math.round(Number(ocr.confidence)*100)}%)</span>}</div>
+              <div style={{color:"#5A4A20",lineHeight:1.7}}>
+                ร้าน: <b>{ocr.vendor||"—"}</b> · วันที่: <b>{ocr.date||"—"}</b> · เลขที่: <b>{ocr.doc_no||"—"}</b><br/>
+                ยอดรวม (บาท): <b>{ocr.total!=null?fmtMoney(ocr.total):"—"}</b> · VAT: {ocr.vat!=null?fmtMoney(ocr.vat):"—"} · เลขภาษี: {ocr.tax_id||"—"}
+                {ocr.fx_amount!=null&&!ocr._foreign&&<><br/><span style={{color:"#8A5A00"}}>สกุลต่างประเทศ: {ocr.fx_currency||"FX"} {fmtMoney(ocr.fx_amount)} → เก็บเป็นยอดบาท {ocr.total!=null?fmtMoney(ocr.total):"—"} ✓</span></>}
+                {ocr.description?<><br/>รายการ: {ocr.description}</>:null}
+              </div>
+              {ocr._foreign
+                ? <div style={{marginTop:6,background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:6,padding:"7px 10px"}}>
+                    <div style={{fontSize:12,color:"#B03A2E",fontWeight:800}}>⛔ บิลนี้เป็นสกุล {ocr._fxc||ocr.fx_currency||"ต่างประเทศ"} {ocr.fx_amount!=null?fmtMoney(ocr.fx_amount):""} — ไม่มียอดเงินบาท / ยังไม่ระบุอัตราแลกเปลี่ยน</div>
+                    <div style={{fontSize:11,color:"#7A3B34",marginTop:2}}>ระบบเปิดช่อง <b>“อัตราแลกเปลี่ยน”</b> ด้านล่างให้แล้ว — กรอกเรต (บาท/หน่วย) ระบบจะคิดเป็นบาทและใส่ช่องจำนวนเงินให้อัตโนมัติ · <b>ห้ามใช้ยอดสกุลต่างประเทศเป็นบาทตรงๆ</b> จะตัดงบผิด</div>
+                  </div>
+                : <div className="muted" style={{fontSize:10.5,marginTop:3}}>ระบบเติมช่อง "จำนวนเงิน" + แนบรูปบิลให้อัตโนมัติแล้ว · แก้ไขได้ถ้าอ่านไม่ตรง</div>}
+            </div>}
+          </div>)}
+          {/* งบคงเหลือราย Cost Code (ฐานต้นทุนจัดซื้อ ตรง ERP) */}
+          {bud&&form.project&&form.cost&&(bud.has_budget
+            ? <div style={{marginTop:6,padding:"8px 12px",borderRadius:8,fontSize:12.5,
+                background:overBudget?"#FDECEE":"#EEF6FF",border:"1px solid "+(overBudget?"#F3C9CE":"#C7D9F7")}}>
+                งบ Cost Code นี้ <b>{fmtMoney(bud.budget)}</b> · ใช้ไปแล้ว (จัดซื้อ) <b>{fmtMoney(Math.max(Number(bud.used),Number(bud.erp)))}</b> ·
+                คงเหลือ <b style={{color:Number(bud.left)<=0?"#B03A2E":"#2E7D5B"}}>{fmtMoney(bud.left)}</b>
+                {overBudget&&<div style={{color:"#B03A2E",fontWeight:700,marginTop:3}}>⛔ งบ cost code นี้ไม่พอ — ต้องลดยอด เปลี่ยน cost code หรือผ่าน governance</div>}
+              </div>
+            : <div className="muted" style={{fontSize:11.5,marginTop:6}}>Cost code นี้ยังไม่ได้ตั้งงบในโครงการนี้ (ไม่เช็คงบ)</div>)}
+          {amt>THRESHOLD&&<div className="muted" style={{color:"#B26A00",marginTop:6}}>⚠ ยอด &gt; {fmtMoney(THRESHOLD)} — ต้องผ่านการอนุมัติ Owner</div>}
+
+          {overBudget&&(<div style={{marginTop:12,background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:10,padding:"12px 14px"}}>
+            <div style={{fontWeight:800,color:"#B03A2E",marginBottom:6}}>⛔ งบไม่พอ — ขาด {fmtMoney(shortfall)} บาท</div>
+            {!etype&&<div style={{fontSize:12.5,color:"#8A5A00"}}>เลือก <b>ประเภทงบ (Opex/Capex)</b> ด้านบนก่อน เพื่อดำเนินการต่อ</div>}
+
+            {etype==="opex"&&(<div style={{fontSize:13,lineHeight:1.7}}>
+              <div style={{marginBottom:8,color:"#7A3B34"}}>ต้อง <b>โยกงบ</b> มาก่อน แล้วแนบ MEMO ที่ลงนามแล้ว จึงจะส่งคำขอได้</div>
+              <div className="field" style={{marginBottom:8}}><label style={{fontSize:12}}>ขอบเขตการโยกงบ</label>
+                <div style={{display:"flex",gap:8}}>
+                  {[["in_dept","ภายในแผนก (ลงนาม CFO)"],["cross_dept","ต่างแผนก (ลงนาม CFO + CEO)"]].map(([v,l])=>(
+                    <label key={v} style={{flex:1,display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12.5,
+                      border:"1px solid "+(tScope===v?"#B03A2E":"#E4C4C4"),background:tScope===v?"#FBE9EA":"#fff",borderRadius:8,padding:"7px 9px"}}>
+                      <input type="radio" name="tscope" checked={tScope===v} onChange={()=>{setTScope(v); if(v==="in_dept") setCeo(false);}}/>{l}
+                    </label>))}
+                </div>
+              </div>
+              <div className="field" style={{marginBottom:8}}><label style={{fontSize:12}}>โครงการต้นทาง (โยกงบมาจาก) *</label>
+                <Combobox options={projects.filter(p=>p.id!==form.project).map(p=>({value:p.id,label:(p.code||"")+" · "+(p.name||""),sub:p.name}))}
+                  value={tFrom} onChange={setTFrom} placeholder="🔎 เลือกโครงการที่จะดึงงบมา" emptyLabel="— เลือก —"/>
+              </div>
+              <div className="field" style={{marginBottom:8}}><label style={{fontSize:12}}>จำนวนเงินที่โยก (บาท) * — อย่างน้อย {fmtMoney(shortfall)}</label>
+                <input type="number" value={tAmt} onChange={e=>setTAmt(e.target.value)} placeholder={String(shortfall)}
+                  style={tAmtNum&&tAmtNum<shortfall?{borderColor:"#B03A2E"}:undefined}/>
+              </div>
+              <label className="btn sm sec" style={{cursor:"pointer",margin:"0 0 8px",display:"inline-block"}}>
+                {memoFile?"เปลี่ยน MEMO":"📎 แนบ MEMO โยกงบ"}
+                <input type="file" style={{display:"none"}} onChange={e=>setMemoFile(e.target.files?.[0]||null)}/>
+              </label>
+              {memoFile&&<span style={{fontSize:12,marginLeft:8}}>{fileIcon(memoFile.type,memoFile.name)} {memoFile.name}</span>}
+              <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5,marginTop:4}}>
+                <input type="checkbox" checked={cfo} onChange={e=>setCfo(e.target.checked)}/> ยืนยัน: MEMO ลงนามโดย <b>CFO</b> แล้ว
+              </label>
+              {tScope==="cross_dept"&&<label style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5,marginTop:4}}>
+                <input type="checkbox" checked={ceo} onChange={e=>setCeo(e.target.checked)}/> ยืนยัน: MEMO ลงนามโดย <b>CEO</b> แล้ว (โยกข้ามแผนก)
+              </label>}
+            </div>)}
+
+            {etype==="capex"&&(<div style={{fontSize:13,lineHeight:1.7}}>
+              <div style={{marginBottom:8,color:"#7A3B34"}}>Capex เกินงบ ต้องนำเข้า <b>ที่ประชุม Excom</b> เมื่ออนุมัติแล้วแนบเอกสารมติจึงจะส่งคำขอได้</div>
+              <label className="btn sm sec" style={{cursor:"pointer",margin:"0 0 8px",display:"inline-block"}}>
+                {excomFile?"เปลี่ยนเอกสาร":"📎 แนบเอกสารมติ Excom"}
+                <input type="file" style={{display:"none"}} onChange={e=>setExcomFile(e.target.files?.[0]||null)}/>
+              </label>
+              {excomFile&&<span style={{fontSize:12,marginLeft:8}}>{fileIcon(excomFile.type,excomFile.name)} {excomFile.name}</span>}
+              <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5,marginTop:4}}>
+                <input type="checkbox" checked={excomAck} onChange={e=>setExcomAck(e.target.checked)}/> ยืนยัน: ได้รับอนุมัติจากที่ประชุม <b>Excom</b> แล้ว
+              </label>
+            </div>)}
+
+            {etype&&(govReady
+              ? <div style={{marginTop:8,fontSize:12.5,color:"#2E7D5B",fontWeight:700}}>✅ ครบเงื่อนไขแล้ว — ส่งคำขอได้</div>
+              : <div style={{marginTop:8,fontSize:12,color:"#B03A2E"}}>ยังขาด: {govMsg}</div>)}
+          </div>)}
+        </div>)}
+        {isEnt&&amt>0&&(()=>{
+          const lv = amt>ENT_CEO_LIMIT ? "ceo" : (amt>ENT_DIR_LIMIT ? "clevel" : "dir");
+          const cfg = lv==="ceo"
+            ? {bg:"#FFF6F6",bd:"#F0B7BC",fg:"#B03A2E",sub:"#7A3B34",icon:"⛔",who:"ประธานเจ้าหน้าที่บริหาร (CEO)",band:"เกิน 20,000"}
+            : lv==="clevel"
+            ? {bg:"#FFF9F0",bd:"#EBD9AE",fg:"#8A5A00",sub:"#5A4A20",icon:"📋",who:"C-Level ของหน่วยงาน",band:"3,001–20,000"}
+            : {bg:"#F1F7FF",bd:"#C2D8F5",fg:"#1F5FB0",sub:"#3A5A82",icon:"📋",who:"ผู้อำนวยการฝ่ายของหน่วยงาน",band:"ไม่เกิน 3,000"};
+          return <div style={{margin:"10px 0",background:cfg.bg,border:"1.5px solid "+cfg.bd,borderRadius:8,padding:"10px 14px"}}>
+            <div style={{fontSize:13,color:cfg.fg,fontWeight:800}}>{cfg.icon} ค่ารับรอง {fmtMoney(amt)} บาท/คน/ครั้ง ({cfg.band} บาท) — ต้องได้รับอนุมัติจาก {cfg.who}</div>
+            <div style={{fontSize:11.5,color:cfg.sub,marginTop:3}}>แนบหลักฐานอนุมัติในช่อง “หลักฐานอนุมัติค่ารับรอง” ด้านล่าง — ไม่แนบจะส่งคำขอไม่ได้ (ประกาศ AMR14/2569)</div>
+          </div>;
+        })()}
+        {sel&&<DocSlots slots={sel.doc_slots} picked={docs} onChange={setDocs}
+          extra={files} onExtra={setFiles} formData={fd}/>}
+
+        {sel&&<div className="field" style={{background:"#F3F8FF",border:"1px solid #C7D9F7",borderRadius:10,padding:"12px 14px"}}>
+          <label style={{color:"#2453A8"}}>🔗 ลิงก์เอกสารภายนอก (สำหรับไฟล์ใหญ่เกิน 10MB — OneDrive / SharePoint / Drive)</label>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <input value={lU} onChange={e=>setLU(e.target.value)} placeholder="วางลิงก์ share (https://...)" style={{flex:"2 1 240px"}}/>
+            <input value={lL} onChange={e=>setLL(e.target.value)} placeholder="ชื่อ/คำอธิบาย (ถ้ามี)" style={{flex:"1 1 140px"}}/>
+            <button type="button" className="btn sm sec" disabled={!lU.trim()}
+              onClick={()=>{ setLinks(v=>[...v,{url:lU.trim(),label:lL.trim()}]); setLU(""); setLL(""); }}>+ เพิ่ม</button>
+          </div>
+          {links.length>0&&<div style={{marginTop:8,display:"grid",gap:4}}>
+            {links.map((l,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5}}>
+              <span>🔗</span><span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.label||l.url}</span>
+              <button type="button" onClick={()=>setLinks(v=>v.filter((_,j)=>j!==i))}
+                style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:14}}>✕</button>
+            </div>))}
+          </div>}
+          <div className="muted" style={{fontSize:11,marginTop:5}}>💡 ตั้งลิงก์ให้ "ผู้ที่มีลิงก์เปิดดูได้" ก่อนวาง เพื่อให้แอดมินเปิดได้</div>
+        </div>}
+        <div className="muted" style={{fontSize:11,marginTop:-6,marginBottom:12}}>
+          รูป / PDF / Word / Excel · สูงสุด 10MB ต่อไฟล์
         </div>
-      </div>
+        <button className="btn" disabled={busy||blockSubmit}>{busy?"กำลังส่ง…":
+          blockSubmit?(advOver?"⛔ งบ cost code ไม่พอ — แก้ไขก่อน":overBudget?"⛔ ทำเงื่อนไขงบไม่พอให้ครบก่อน":"⛔ เลือกประเภทงบก่อน"):"ส่งคำขอ"}</button>
+      </form>
     </div>
   </Shell>);
 }
