@@ -244,6 +244,21 @@ export default function RequestDetail(){
     if(error){ setMsg("ลงนามไม่สำเร็จ: "+error.message); return; }
     setMsg("ลงนามเรียบร้อย"); load();
   }
+  // ── e-signature ค่ารับรอง (ผู้จัดทำ / ผู้อนุมัติตามวงเงิน) — เซ็นบนเครื่องในหน้าคำขอ ──
+  async function signEnt(kind, roleLabel){
+    const meName = names[uid] || (team.find(x=>x.profiles?.id===uid)?.profiles?.full_name) || "";
+    const nm = prompt("พิมพ์ชื่อผู้ลงนาม ("+roleLabel+"):", kind==="ent_prepare"?(r.requester?.full_name||meName):"");
+    if(nm===null || !nm.trim()) return;
+    let image=null;
+    if(confirm("แนบรูปลายเซ็นด้วยไหม?\n\nOK = เลือกไฟล์รูปลายเซ็น · Cancel = ใช้ชื่อพิมพ์อย่างเดียว")){
+      image = await pickImageDataUrl();
+    }
+    setSigBusy(true);
+    const { error }=await supabase.from("hub_signatures").insert({request_id:id,kind,user_id:uid,signer_name:nm.trim(),signer_role:roleLabel,image_data:image});
+    setSigBusy(false);
+    if(error){ setMsg("ลงนามไม่สำเร็จ: "+error.message); return; }
+    setMsg("ลงนามเรียบร้อย"); load();
+  }
   function printTravelPDF(){
     const fd=r.form_data||{}; const list=Array.isArray(fd.trips)?fd.trips:[];
     const sR=sigs.find(s=>s.kind==="review"), sA=sigs.find(s=>s.kind==="approve");
@@ -273,7 +288,14 @@ export default function RequestDetail(){
     const filler=Array.from({length:Math.max(0,5-items.length)}).map((_,i)=>`<tr><td style="text-align:center">${items.length+i+1}</td><td></td><td></td><td></td></tr>`).join("");
     const rows=items.map(it=>`<tr><td style="text-align:center">${it.no}</td><td style="text-align:center">${esc(it.date)}</td><td>${esc(it.desc)}</td><td style="text-align:right">${fmtMoney(it.amt)}</td></tr>`).join("")+filler;
     const need=total>20000?"ceo":(total>3000?"clevel":"dir");
-    const box=(title,cap,on,name)=>`<td style="border:1px solid #999;padding:8px 6px;text-align:center;vertical-align:top;width:25%;${on?"background:#FFF3E0":""}"><div style="font-weight:700;font-size:11px">${title}</div><div style="font-size:10px;color:#666">${cap}</div><div style="height:44px"></div><div style="border-top:1px solid #333;margin:0 6px;padding-top:2px;font-size:11px">( ${esc(name||"")} )</div><div style="font-size:10px;color:#555">ตำแหน่ง ...............</div><div style="font-size:10px;color:#555">วันที่ ......./......./.......</div></td>`;
+    const sPrep=sigs.find(s=>s.kind==="ent_prepare");
+    const sApv=sigs.find(s=>s.kind==="ent_approve");
+    const box=(title,cap,on,sig,fbName)=>{
+      const nm = sig ? sig.signer_name : (fbName||"");
+      const img = (sig&&sig.image_data) ? `<img src="${sig.image_data}" style="max-height:40px;max-width:130px"/>` : "";
+      const dt = sig ? ("ลงนาม "+new Date(sig.created_at).toLocaleDateString("th-TH")) : "วันที่ ......./......./.......";
+      return `<td style="border:1px solid #999;padding:8px 6px;text-align:center;vertical-align:top;width:25%;${on?"background:#FFF3E0":""}"><div style="font-weight:700;font-size:11px">${title}</div><div style="font-size:10px;color:#666">${cap}</div><div style="height:44px;display:flex;align-items:flex-end;justify-content:center">${img}</div><div style="border-top:1px solid #333;margin:0 6px;padding-top:2px;font-size:11px">( ${esc(nm)} )</div><div style="font-size:10px;color:#555">ตำแหน่ง ...............</div><div style="font-size:10px;color:#555">${dt}</div></td>`;
+    };
     const chk=(on)=>on?"☑":"☐";
     const html=`<!doctype html><html><head><meta charset="utf-8"><title>ใบขอเบิกค่ารับรอง ${esc(r.ticket_no)}</title><style>*{font-family:'TH Sarabun New','Sarabun',Tahoma,sans-serif;box-sizing:border-box}body{margin:0;padding:26px;color:#111;font-size:13px}h1{font-size:19px;text-align:center;margin:0 0 12px}table{width:100%;border-collapse:collapse}td,th{border:1px solid #999;padding:4px 6px;font-size:12px}.row{margin:3px 0}u{text-underline-offset:3px}@media print{button{display:none}}</style></head><body>
 <button onclick="window.print()" style="float:right;padding:6px 12px">🖨 พิมพ์ / บันทึก PDF</button>
@@ -291,7 +313,7 @@ export default function RequestDetail(){
 <div class="row" style="font-weight:700;margin-top:8px">รายละเอียดค่ารับรอง</div>
 <table><thead><tr><th style="width:8%">ลำดับ</th><th style="width:20%">วัน เดือน ปี</th><th>รายละเอียด</th><th style="width:18%">จำนวนเงิน</th></tr></thead><tbody>${rows}<tr><td colspan="3" style="text-align:right;font-weight:700">รวม</td><td style="text-align:right;font-weight:700">${fmtMoney(total)}</td></tr></tbody></table>
 <div style="font-size:11px;color:#b03a2e;margin:3px 0 10px">(กรุณาแนบหลักฐานใบกำกับภาษี ใบเสร็จรับเงิน หรือหลักฐานการจ่ายเงิน สำหรับทุกรายการ)</div>
-<table><tbody><tr>${box("ผู้จัดทำ","",false,r.requester&&r.requester.full_name)}${box("ผู้อนุมัติ (ผอ.ฝ่าย)","กรณี ไม่เกิน 3,000 บาท",need==="dir","")}${box("ผู้อนุมัติ (C-Level)","กรณี ไม่เกิน 20,000 บาท",need==="clevel","")}${box("ผู้อนุมัติ (CEO)","กรณี เกิน 20,000 บาท",need==="ceo","")}</tr></tbody></table>
+<table><tbody><tr>${box("ผู้จัดทำ","",false,sPrep,r.requester&&r.requester.full_name)}${box("ผู้อนุมัติ (ผอ.ฝ่าย)","กรณี ไม่เกิน 3,000 บาท",need==="dir",need==="dir"?sApv:null,"")}${box("ผู้อนุมัติ (C-Level)","กรณี ไม่เกิน 20,000 บาท",need==="clevel",need==="clevel"?sApv:null,"")}${box("ผู้อนุมัติ (CEO)","กรณี เกิน 20,000 บาท",need==="ceo",need==="ceo"?sApv:null,"")}</tr></tbody></table>
 <div style="font-size:10.5px;color:#666;margin-top:6px">* ช่องที่ไฮไลต์ = ระดับผู้อนุมัติที่ต้องลงนามตามวงเงิน ${fmtMoney(total)} บาท/คน/ครั้ง (ประกาศ AMR14/2569)</div>
 </body></html>`;
     const w=window.open("","_blank"); if(!w){ setMsg("เบราว์เซอร์บล็อกป๊อปอัป — อนุญาตป๊อปอัปแล้วลองใหม่"); return; }
@@ -399,13 +421,36 @@ export default function RequestDetail(){
           <div className="muted" style={{fontSize:12,marginTop:6}}>สร้างไฟล์ Excel ตามแบบฟอร์มบริษัท (Advance Request / Clearing Form) เติมข้อมูลจากคำขอให้อัตโนมัติ — สำหรับทีม GA ทุกคน</div>
         </div>)}
 
-        {isEntReq&&(<div className="card" style={{background:"#FFFBF4",border:"1px solid #EBD9AE"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-            <h2 style={{margin:0}}>🍽️ ใบขอเบิกค่ารับรอง</h2>
-            <button className="btn sm" onClick={printEntPDF}>🖨 สร้างใบขอเบิกค่ารับรอง (PDF)</button>
-          </div>
-          <div className="muted" style={{fontSize:12,marginTop:6}}>สร้างใบขอเบิกค่ารับรองตามแบบฟอร์มบริษัท (ประกาศ AMR14/2569) จากข้อมูลที่กรอกอัตโนมัติ — เปิดแล้วกดพิมพ์/บันทึกเป็น PDF เพื่อเสนอผู้อนุมัติตามวงเงิน</div>
-        </div>)}
+        {isEntReq&&(()=>{
+          const eAmt=Number(r.form_data?.amount)||(exp[0]?Number(exp[0].amount):0)||0;
+          const tier=eAmt>20000?"CEO":(eAmt>3000?"C-Level":"ผอ.ฝ่าย");
+          const canSignEnt = staff || uid===r.requester_id;
+          const sPrep=sigs.find(s=>s.kind==="ent_prepare");
+          const sApv=sigs.find(s=>s.kind==="ent_approve");
+          const cell=(title,s,kind,roleLabel)=>(
+            <div style={{textAlign:"center",border:"1px solid "+(s?"#B7DEC8":"#E4E7EB"),borderRadius:8,padding:10,background:s?"#F6FBF8":"#fff"}}>
+              <div style={{height:44,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {s?.image_data?<img src={s.image_data} alt="ลายเซ็น" style={{maxHeight:42,maxWidth:120}}/>:(s?<span style={{color:"#2E7D5B",fontSize:20}}>✓</span>:null)}
+              </div>
+              <div style={{fontWeight:700,borderTop:"1px solid #ccc",paddingTop:4,fontSize:12.5}}>{s?s.signer_name:"— ยังไม่ลงนาม —"}</div>
+              <div className="muted" style={{fontSize:11}}>{title}</div>
+              {s?<div className="muted" style={{fontSize:10}}>ลงนาม {fmtDate(s.created_at)}</div>
+                :canSignEnt?<button className="btn sm" style={{marginTop:6,fontSize:11}} disabled={sigBusy} onClick={()=>signEnt(kind,roleLabel)}>✍️ ลงนาม</button>
+                :<div className="muted" style={{fontSize:10,marginTop:4}}>—</div>}
+            </div>
+          );
+          return (<div className="card" style={{background:"#FFFBF4",border:"1px solid #EBD9AE"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+              <h2 style={{margin:0}}>🍽️ ใบขอเบิกค่ารับรอง</h2>
+              <button className="btn sm" onClick={printEntPDF}>🖨 สร้าง PDF</button>
+            </div>
+            <div className="muted" style={{fontSize:12,marginTop:6,marginBottom:10}}>วงเงิน {fmtMoney(eAmt)} บาท/คน/ครั้ง → ต้องอนุมัติโดย <b>{tier}</b> (ประกาศ AMR14/2569) · ให้ผู้เกี่ยวข้องลงนามในระบบ แล้วกด "สร้าง PDF" — ลายเซ็นจะเข้าเอกสารอัตโนมัติ</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              {cell("ผู้จัดทำ (ผู้ขอเบิก)",sPrep,"ent_prepare","ผู้จัดทำ")}
+              {cell("ผู้อนุมัติ ("+tier+")",sApv,"ent_approve",tier)}
+            </div>
+          </div>);
+        })()}
 
         {trips&&(<div className="card">
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
