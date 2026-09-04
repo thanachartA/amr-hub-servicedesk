@@ -184,20 +184,28 @@ export default function NewRequest(){
     });
     return out;
   }
-  // เตรียมไฟล์ก่อนส่ง: รูป → ย่อ + บีบเป็น JPEG (กันไฟล์ใหญ่เกิน limit + ลด token) · PDF → ส่งตามเดิม
+  // เตรียมไฟล์ก่อนส่ง: รูป → ย่อ+บีบวนจนต่ำกว่า limit (กัน HTTP 413) · PDF → เช็คขนาด ถ้าใหญ่เกินแจ้งเตือน
   async function fileToPayload(f){
+    const LIMIT = 3400000; // ~3.4MB (base64) กันชน Vercel body limit 4.5MB
     if(f.type && f.type.startsWith("image/")){
       try{
         const dataUrl=await toDataUrl(f);
         const img=await new Promise((res,rej)=>{ const im=new Image(); im.onload=()=>res(im); im.onerror=rej; im.src=dataUrl; });
-        const max=1600, scale=Math.min(1, max/Math.max(img.width,img.height));
-        const cw=Math.max(1,Math.round(img.width*scale)), ch=Math.max(1,Math.round(img.height*scale));
-        const cv=document.createElement("canvas"); cv.width=cw; cv.height=ch;
-        cv.getContext("2d").drawImage(img,0,0,cw,ch);
-        return { image:cv.toDataURL("image/jpeg",0.82), mime:"image/jpeg" };
-      }catch(e){ /* ถ้าย่อไม่ได้ ส่งไฟล์เดิม */ }
+        let max=1600, q=0.82, out=dataUrl;
+        for(let i=0;i<6;i++){
+          const scale=Math.min(1, max/Math.max(img.width,img.height));
+          const cw=Math.max(1,Math.round(img.width*scale)), ch=Math.max(1,Math.round(img.height*scale));
+          const cv=document.createElement("canvas"); cv.width=cw; cv.height=ch;
+          cv.getContext("2d").drawImage(img,0,0,cw,ch);
+          out=cv.toDataURL("image/jpeg",q);
+          if(out.length<=LIMIT) break;
+          max=Math.round(max*0.8); q=Math.max(0.45,q-0.1);   // ยังใหญ่ → ย่อ+ลดคุณภาพลงอีก
+        }
+        return { image:out, mime:"image/jpeg" };
+      }catch(e){ /* ถ้าย่อไม่ได้ ส่งไฟล์เดิม (จะถูกเช็คขนาดด้านล่าง) */ }
     }
     const dataUrl=await toDataUrl(f);
+    if(dataUrl.length>LIMIT) throw new Error("ไฟล์ใหญ่เกิน (จำกัด ~3.5MB) — ถ้าเป็น PDF ให้ถ่ายรูปบิลแทน หรือย่อ/บีบไฟล์ก่อน แล้วลองใหม่");
     return { image:dataUrl, mime: f.type||(/\.pdf$/i.test(f.name)?"application/pdf":"image/jpeg") };
   }
   async function ocrOne(f){
