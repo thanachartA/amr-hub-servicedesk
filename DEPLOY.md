@@ -1,5 +1,3 @@
-
-<!-- push-test 2026-09-04: verified Claude can edit + commit via Chrome -->
 # AMR Central Admin Hub — Service Desk : คู่มือ Deploy
 
 แอป Next.js 14 (App Router) พร้อม deploy แล้ว — Backend (Supabase) ตั้งค่าเสร็จและใช้งานได้จริง
