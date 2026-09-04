@@ -85,9 +85,9 @@ export default function NewRequest(){
   // Advance / Clear Advance = 1 OF มีได้หลาย cost → ยอดรวมทั้งใบใช้เช็คงบ/อนุมัติ
   const isAdvance = !!needExpense && /advance/i.test(sel?.name||"");
   const useLines = isAdvance || (multiCost && !!needExpense);  // ใช้ตารางหลาย cost code (Advance หรือ OF แยกหลาย cost)
-  // ค่ารับรองลูกค้า (ประกาศ AMR0X/2569): ≤10,000 บาท/ครั้ง → C-Level · >10,000 → CEO
+  // ค่ารับรองลูกค้า (ประกาศ AMR14/2569): ≤3,000 → ผอ.ฝ่าย · ≤20,000 → C-Level · >20,000 → CEO (ต่อคน/ครั้ง)
   const isEnt = /Client Entertainment/.test(fd?.doc_type||"");
-  const ENT_CEO_LIMIT = 10000;
+  const ENT_DIR_LIMIT = 3000, ENT_CEO_LIMIT = 20000;
   // งานที่ "ตั้งเบิกตาม commit เดิม" (เช่น Billing วางบิลตาม WO ที่ตัดงบแล้ว) → ไม่เช็ค/ไม่ตัดงบซ้ำ
   const skipBudget = !!sel?.skip_budget_check;
   // ── ค่าเดินทางรถส่วนตัว: กม. = ไมล์กลับ−ไป · เงิน = กม.×7 · recheck vs Google Maps (ส่วนต่าง>10 = ⚠) ──
@@ -102,7 +102,8 @@ export default function NewRequest(){
   const advRefund  = advLines.reduce((s,l)=>s+(l.refund?nAmt(l.amount):0),0);   // เงินคืน (ไม่มี cost code)
   const advTotal = advExpense;   // amt = เฉพาะค่าใช้จ่ายจริง (เงินคืนไม่ใช่ค่าใช้จ่าย/ไม่ตัดงบ)
   const amt = isTravel ? travelTotal : (useLines ? advTotal : (Number(String(form.amount).replace(/[,\s]/g,""))||0));
-  const overBudget = !skipBudget && bud?.has_budget && amt>0 && amt > Number(bud.left);
+  // โหมดหลาย cost code (Advance/OF แยก) เช็คงบราย "บรรทัด" (advOver) ไม่ใช่ยอดรวมกับ cost เดี่ยว → กัน bud ค้างจาก form.cost มาบล็อก
+  const overBudget = !useLines && !skipBudget && bud?.has_budget && amt>0 && amt > Number(bud.left);
   // ── Advance: เช็คงบราย cost code รายบรรทัด (รวมยอดต่อ cost code แล้วเทียบงบเหลือ) ──
   const advByCost = {};
   if(useLines && !skipBudget) advLines.forEach(l=>{ if(l.cost && !l.refund){ const a=nAmt(l.amount); advByCost[l.cost]=(advByCost[l.cost]||0)+a; } });
@@ -238,6 +239,30 @@ export default function NewRequest(){
     }catch(e){ setErr("ถอดข้อมูลจากบิลไม่สำเร็จ: "+(e?.message||e)); }
     setOcrBusy(false);
   }
+  // ค่ารับรองหลายใบ: เลือกหลายไฟล์ (1 ไฟล์ = 1 บิล) → ถอดทุกใบ → รวมยอดใส่ช่องจำนวนเงิน + เก็บรายการลง _ocr.items (ขึ้นในใบขอเบิกค่ารับรอง PDF)
+  async function extractEntBills(){
+    const fs=await pickImgs(); if(!fs.length) return;
+    setOcrBusy(true); setErr(null);
+    const items=[]; const addF=[]; let fail=0; let lastErr="";
+    for(const f of fs){
+      try{ const { data:d }=await ocrOne(f);
+        const cur=String(d.currency||"").toUpperCase();
+        const thb=(cur&&cur!=="THB")?0:(Number(d.total)>0?Number(d.total):0);
+        items.push({ date:d.date||"", name:[d.vendor,d.description].filter(Boolean).join(" · ")||"ค่ารับรอง", amount:thb });
+        addF.push(f);
+      }catch(e){ fail++; lastErr=(e&&e.message)||String(e); }
+    }
+    const total=Math.round(items.reduce((s,it)=>s+(Number(it.amount)||0),0)*100)/100;
+    if(items.length){
+      setOcr({ items, model:"ent-multi" });
+      if(total>0) up("amount", String(total));
+      setFiles(v=>[...v, ...addF]);
+    }
+    setOcrBusy(false);
+    setErr(items.length
+      ? ("ถอดได้ "+items.length+" ใบ · รวม "+fmtMoney(total)+" บาท"+(fail?(" · อ่านไม่สำเร็จ "+fail+" ไฟล์"):"")+" — ตรวจยอดก่อนส่ง (รายการจะขึ้นในใบขอเบิกค่ารับรอง PDF)")
+      : ("ถอดไม่สำเร็จ"+(lastErr?(" — "+lastErr):"")));
+  }
   // Clear Advance: เลือกไฟล์ (แต่ละไฟล์อาจมีใบปะหน้า+บิลจริงหลายใบ) → แตกเป็นหลายบรรทัด 1 บิล/บรรทัด + auto-match cost code
   async function extractBillsAdvance(){
     const fs=await pickImgs(); if(!fs.length) return;
@@ -337,7 +362,8 @@ export default function NewRequest(){
       window.scrollTo({top:0,behavior:"smooth"}); return;
     }
     setBusy(true);
-    const { data:sess }=await supabase.auth.getSession(); const uid=sess.session.user.id;
+    const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
+    if(!uid){ setErr("เซสชันหมดอายุ — กรุณาเข้าสู่ระบบใหม่แล้วส่งอีกครั้ง"); setBusy(false); return; }
     const sla=new Date(Date.now()+(Number(sel?.default_sla_hours||24))*3600e3).toISOString();
     const { data:req, error }=await supabase.from("hub_requests").insert({
       requester_id:uid, request_type_id:form.type, title:form.title, detail:form.detail,
@@ -354,7 +380,7 @@ export default function NewRequest(){
     if(error){ setErr(error.message); setBusy(false); return; }
     if(needExpense && (amt>0 || (useLines && advRefund>0))){
       // 1 entry รวม (amount = ค่าใช้จ่ายจริง ไม่รวมเงินคืน) คุมอนุมัติ+งบ · สถานะอนุมัติกำหนดโดย trigger DB
-      const { data:entry }=await supabase.from("hub_expense_entries").insert({
+      const { data:entry, error:eerr }=await supabase.from("hub_expense_entries").insert({
         request_id:req.id, project_id:form.project||null,
         cost_code_id: useLines ? null : (form.cost||null),
         amount: amt,
@@ -362,13 +388,15 @@ export default function NewRequest(){
         out_of_budget: !!overBudget,
         ob_kind: overBudget ? (etype==="opex"?"transfer":"excom") : null
       }).select("id").single();
+      if(eerr){ setErr("บันทึกคำขอแล้ว แต่บันทึกรายการค่าใช้จ่ายไม่สำเร็จ ("+eerr.message+") — แจ้งแอดมินก่อนส่งซ้ำ"); setBusy(false); return; }
       // breakdown รายบรรทัด (Clear Advance)
       if(useLines && entry){
         const lines=advLines
           .filter(l=>nAmt(l.amount)>0)
           .map(l=>({ request_id:req.id, entry_id:entry.id, cost_code_id:l.refund?null:(l.cost||null),
                      amount:nAmt(l.amount), description:l.note||null, is_refund:!!l.refund }));
-        if(lines.length) await supabase.from("hub_expense_lines").insert(lines);
+        if(lines.length){ const { error:lerr }=await supabase.from("hub_expense_lines").insert(lines);
+          if(lerr){ setErr("บันทึกคำขอแล้ว แต่บันทึกรายการแยก Cost Code ไม่สำเร็จ ("+lerr.message+") — แจ้งแอดมิน"); setBusy(false); return; } }
       }
     }
     // งบไม่พอ + Opex → บันทึกการโยกงบ (ปรับตัวเลขงบจริง)
@@ -621,11 +649,21 @@ export default function NewRequest(){
           </>
           )}
           {needExpense&&!isTravel&&!useLines&&(<div style={{marginTop:8}}>
-            <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBill}
-              style={{borderColor:"#2453A8",color:"#2453A8"}}>
-              {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดข้อมูลจากบิล (รูป/PDF)"}
-            </button>
-            {ocr&&<div style={{marginTop:6,background:"#FFFBEB",border:"1px solid #EBD9AE",borderRadius:8,padding:"8px 11px",fontSize:12}}>
+            {isEnt
+              ? <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractEntBills} style={{borderColor:"#2453A8",color:"#2453A8"}}>
+                  {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดหลายบิล — ค่ารับรอง (เลือกได้หลายไฟล์ · รวมยอดให้)"}
+                </button>
+              : <button type="button" className="btn sm sec" disabled={ocrBusy} onClick={extractBill} style={{borderColor:"#2453A8",color:"#2453A8"}}>
+                  {ocrBusy?"⏳ กำลังอ่านบิล…":"📷 ถอดข้อมูลจากบิล (รูป/PDF)"}
+                </button>}
+            {ocr&&Array.isArray(ocr.items)&&ocr.items.length>0&&(<div style={{marginTop:6,background:"#FFFBEB",border:"1px solid #EBD9AE",borderRadius:8,padding:"8px 11px",fontSize:12}}>
+              <div style={{fontWeight:700,color:"#8A5A00",marginBottom:3}}>🟡 ถอดได้ {ocr.items.length} ใบ · รวม {fmtMoney(ocr.items.reduce((s,it)=>s+(Number(it.amount)||0),0))} บาท — ตรวจก่อนส่ง</div>
+              <div style={{color:"#5A4A20",lineHeight:1.7}}>
+                {ocr.items.map((it,i)=>(<div key={i}>{i+1}. {it.name||"—"}{it.date?(" · "+it.date):""} · <b>{fmtMoney(it.amount)}</b></div>))}
+              </div>
+              <div className="muted" style={{fontSize:10.5,marginTop:3}}>รวมยอดใส่ช่อง "จำนวนเงิน" + แนบรูปให้แล้ว · รายการจะขึ้นในใบขอเบิกค่ารับรอง (PDF)</div>
+            </div>)}
+            {ocr&&!Array.isArray(ocr.items)&&<div style={{marginTop:6,background:"#FFFBEB",border:"1px solid #EBD9AE",borderRadius:8,padding:"8px 11px",fontSize:12}}>
               <div style={{fontWeight:700,color:"#8A5A00",marginBottom:3}}>🟡 ข้อมูลจากบิล — โปรดตรวจสอบก่อนส่ง{ocr.confidence!=null&&<span style={{fontWeight:400}}> (ความมั่นใจ {Math.round(Number(ocr.confidence)*100)}%)</span>}</div>
               <div style={{color:"#5A4A20",lineHeight:1.7}}>
                 ร้าน: <b>{ocr.vendor||"—"}</b> · วันที่: <b>{ocr.date||"—"}</b> · เลขที่: <b>{ocr.doc_no||"—"}</b><br/>
@@ -705,15 +743,18 @@ export default function NewRequest(){
               : <div style={{marginTop:8,fontSize:12,color:"#B03A2E"}}>ยังขาด: {govMsg}</div>)}
           </div>)}
         </div>)}
-        {isEnt&&amt>0&&(amt>ENT_CEO_LIMIT
-          ? <div style={{margin:"10px 0",background:"#FFF6F6",border:"1.5px solid #F0B7BC",borderRadius:8,padding:"10px 14px"}}>
-              <div style={{fontSize:13,color:"#B03A2E",fontWeight:800}}>⛔ ค่ารับรอง {fmtMoney(amt)} บาท (เกิน 10,000/ครั้ง) — ต้องได้รับอนุมัติจาก CEO ก่อน</div>
-              <div style={{fontSize:11.5,color:"#7A3B34",marginTop:3}}>แนบหลักฐานอนุมัติจาก CEO ในช่อง “หลักฐานอนุมัติค่ารับรอง” ด้านล่าง — ไม่แนบจะส่งคำขอไม่ได้ (ประกาศ AMR0X/2569)</div>
-            </div>
-          : <div style={{margin:"10px 0",background:"#FFF9F0",border:"1.5px solid #EBD9AE",borderRadius:8,padding:"10px 14px"}}>
-              <div style={{fontSize:13,color:"#8A5A00",fontWeight:800}}>📋 ค่ารับรอง {fmtMoney(amt)} บาท (≤10,000/ครั้ง) — ต้องได้รับอนุมัติจาก C-Level ของหน่วยงาน</div>
-              <div style={{fontSize:11.5,color:"#5A4A20",marginTop:3}}>แนบหลักฐานอนุมัติจาก C-Level ในช่อง “หลักฐานอนุมัติค่ารับรอง” ด้านล่าง — ไม่แนบจะส่งคำขอไม่ได้ (ประกาศ AMR0X/2569)</div>
-            </div>)}
+        {isEnt&&amt>0&&(()=>{
+          const lv = amt>ENT_CEO_LIMIT ? "ceo" : (amt>ENT_DIR_LIMIT ? "clevel" : "dir");
+          const cfg = lv==="ceo"
+            ? {bg:"#FFF6F6",bd:"#F0B7BC",fg:"#B03A2E",sub:"#7A3B34",icon:"⛔",who:"ประธานเจ้าหน้าที่บริหาร (CEO)",band:"เกิน 20,000"}
+            : lv==="clevel"
+            ? {bg:"#FFF9F0",bd:"#EBD9AE",fg:"#8A5A00",sub:"#5A4A20",icon:"📋",who:"C-Level ของหน่วยงาน",band:"3,001–20,000"}
+            : {bg:"#F1F7FF",bd:"#C2D8F5",fg:"#1F5FB0",sub:"#3A5A82",icon:"📋",who:"ผู้อำนวยการฝ่ายของหน่วยงาน",band:"ไม่เกิน 3,000"};
+          return <div style={{margin:"10px 0",background:cfg.bg,border:"1.5px solid "+cfg.bd,borderRadius:8,padding:"10px 14px"}}>
+            <div style={{fontSize:13,color:cfg.fg,fontWeight:800}}>{cfg.icon} ค่ารับรอง {fmtMoney(amt)} บาท/คน/ครั้ง ({cfg.band} บาท) — ต้องได้รับอนุมัติจาก {cfg.who}</div>
+            <div style={{fontSize:11.5,color:cfg.sub,marginTop:3}}>แนบหลักฐานอนุมัติในช่อง “หลักฐานอนุมัติค่ารับรอง” ด้านล่าง — ไม่แนบจะส่งคำขอไม่ได้ (ประกาศ AMR14/2569)</div>
+          </div>;
+        })()}
         {sel&&<DocSlots slots={sel.doc_slots} picked={docs} onChange={setDocs}
           extra={files} onExtra={setFiles} formData={fd}/>}
 
