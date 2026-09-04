@@ -51,7 +51,7 @@ export default function NewRequest(){
   const [fxOn,setFxOn]=useState(false); const [fx,setFx]=useState({cur:"",amt:"",rate:""});  // อัตราแลกเปลี่ยน → คิดบาทอัตโนมัติ
   const [multiCost,setMultiCost]=useState(false);  // OF: แยกหลาย Cost Code (ค่าอุปกรณ์/เดินทาง/อื่นๆ ใน 1 ใบ)
   const [ccMap,setCcMap]=useState({});   // งบเหลือราย cost code ของโครงการ (ใช้เช็ค Advance รายบรรทัด)
-  const [trips,setTrips]=useState([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);  // ค่าเดินทางหลายเที่ยว
+  const [trips,setTrips]=useState([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",toll:"",photoOut:null,photoIn:null}]);  // ค่าเดินทางหลายเที่ยว
   const [ocr,setOcr]=useState(null); const [ocrBusy,setOcrBusy]=useState(false);   // ถอดข้อมูลจากบิล (AI)
   useEffect(()=>{ (async()=>{
     const { data:sess }=await supabase.auth.getSession(); const uid=sess?.session?.user?.id;
@@ -95,8 +95,11 @@ export default function NewRequest(){
   const tripKm=(t)=>{ const a=Number(t.odoOut),b=Number(t.odoIn); return (isFinite(a)&&isFinite(b)&&b>a)?(b-a):0; };
   const tripDiff=(t)=>{ const m=Number(t.mapsKm); return (isFinite(m)&&m>0&&tripKm(t)>0)?(tripKm(t)-m):null; };
   const tripOver=(t)=>{ const d=tripDiff(t); return d!==null && d>MAPS_TOL; };
+  const tripToll=(t)=>{ const v=Number(t.toll); return isFinite(v)&&v>0?v:0; };
+  const tripAmount=(t)=>tripKm(t)*RATE_KM + tripToll(t);   // ค่ากม. + ค่าทางด่วน
   const travelKm = trips.reduce((s,t)=>s+tripKm(t),0);
-  const travelTotal = travelKm*RATE_KM;
+  const travelTolls = trips.reduce((s,t)=>s+tripToll(t),0);
+  const travelTotal = travelKm*RATE_KM + travelTolls;
   const nAmt=(x)=>Number(String(x).replace(/[,\s]/g,""))||0;
   const advExpense = advLines.reduce((s,l)=>s+(l.refund?0:nAmt(l.amount)),0);  // ค่าใช้จ่ายจริง (มี cost code)
   const advRefund  = advLines.reduce((s,l)=>s+(l.refund?nAmt(l.amount):0),0);   // เงินคืน (ไม่มี cost code)
@@ -135,7 +138,7 @@ export default function NewRequest(){
       setEtype(""); setTScope("in_dept"); setTFrom(""); setTAmt(""); setCfo(false); setCeo(false);
       setMemoFile(null); setExcomFile(null); setExcomAck(false);
       setAdvLines([{cost:"",amount:"",note:"",refund:false,slip:false}]);
-      setTrips([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]);
+      setTrips([{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",toll:"",photoOut:null,photoIn:null}]);
       setOcr(null); setFxOn(false); setFx({cur:"",amt:"",rate:""}); setMultiCost(false);
       setLinks([]); setLU(""); setLL(""); }
   }
@@ -153,7 +156,7 @@ export default function NewRequest(){
   function attachSlip(i,f){ if(!f) return; setFiles(v=>[...v,f]); setLine(i,"slip",true); }
   // ── ค่าเดินทาง: จัดการเที่ยว ──
   const setTrip=(i,k,v)=>setTrips(a=>a.map((t,idx)=>idx===i?{...t,[k]:v}:t));
-  const addTrip=()=>setTrips(a=>a.length<8?[...a,{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",photoOut:null,photoIn:null}]:a);
+  const addTrip=()=>setTrips(a=>a.length<8?[...a,{date:"",vtype:"รถยนต์",dest:"",odoOut:"",odoIn:"",mapsKm:"",reason:"",toll:"",photoOut:null,photoIn:null}]:a);
   const rmTrip=(i)=>setTrips(a=>a.length>1?a.filter((_,idx)=>idx!==i):a);
   // ── ถอดข้อมูลจากบิลด้วย AI (Gemini) แล้วให้ผู้ใช้/แอดมินตรวจสอบ ──
   const pickImg=()=>new Promise(r=>{ const i=document.createElement("input"); i.type="file"; i.accept="image/*,application/pdf,.pdf"; i.onchange=()=>r(i.files&&i.files[0]||null); i.click(); });
@@ -369,10 +372,10 @@ export default function NewRequest(){
       requester_id:uid, request_type_id:form.type, title:form.title, detail:form.detail,
       priority:form.priority, requested_due:form.due||null, sla_due_at:sla, status:"new",
       project_id: form.project||null, department_code: form.department||null,
-      form_data: isTravel ? {...fd, rate:RATE_KM, total_km:travelKm,
+      form_data: isTravel ? {...fd, rate:RATE_KM, total_km:travelKm, tolls_total:travelTolls,
         trips: trips.filter(t=>tripKm(t)>0).map((t,i)=>({no:i+1,date:t.date,vtype:t.vtype,dest:t.dest,
           odo_out:Number(t.odoOut),odo_in:Number(t.odoIn),km:tripKm(t),maps_km:Number(t.mapsKm),
-          diff:tripDiff(t),over:tripOver(t),reason:t.reason||"",amount:tripKm(t)*RATE_KM})) }
+          diff:tripDiff(t),over:tripOver(t),reason:t.reason||"",toll:tripToll(t),amount:tripAmount(t)})) }
           : { ...fd,
               ...(ocr ? { _ocr:{...ocr, confirmed_total:amt, at:new Date().toISOString()} } : {}),
               ...(fxOn && fxThb>0 ? { _fx:{ currency:fx.cur||null, fx_amount:Number(fx.amt)||null, rate:Number(fx.rate)||null, thb:fxThb } } : {}) }
@@ -502,7 +505,7 @@ export default function NewRequest(){
               <table style={{margin:0,fontSize:11.5,minWidth:940}}><thead><tr style={{background:"#F0F7F2"}}>
                 <th style={{width:26}}>#</th><th style={{width:120}}>วันที่</th><th>ปลายทาง/วัตถุประสงค์</th>
                 <th style={{width:78}}>ไมล์ไป</th><th style={{width:78}}>ไมล์กลับ</th><th style={{width:52}}>กม.</th>
-                <th style={{width:82}}>Maps(กม.)</th><th style={{width:96}}>สถานะ</th><th className="right" style={{width:80}}>เงิน</th><th style={{width:120}}>รูปไมล์ (ไป/กลับ)</th><th style={{width:26}}></th>
+                <th style={{width:82}}>Maps(กม.)</th><th style={{width:96}}>สถานะ</th><th className="right" style={{width:78}}>ทางด่วน(บาท)</th><th className="right" style={{width:80}}>เงิน</th><th style={{width:120}}>รูปไมล์ (ไป/กลับ)</th><th style={{width:26}}></th>
               </tr></thead><tbody>
               {trips.map((t,i)=>{ const km=tripKm(t); const d=tripDiff(t); const over=tripOver(t); return (<Fragment key={i}>
                 <tr>
@@ -514,7 +517,8 @@ export default function NewRequest(){
                   <td style={{textAlign:"right",fontWeight:700}}>{km||"-"}</td>
                   <td><input type="number" value={t.mapsKm} onChange={e=>setTrip(i,"mapsKm",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
                   <td style={{textAlign:"center",fontSize:10.5,fontWeight:700,color:over?"#B03A2E":(d!==null?"#2E7D5B":"#98A4AE")}}>{d===null?"รอ Maps":over?("⚠ เกิน "+d):"✓ ปกติ"}</td>
-                  <td style={{textAlign:"right"}}>{km?fmtMoney(km*RATE_KM):"-"}</td>
+                  <td><input type="number" value={t.toll} onChange={e=>setTrip(i,"toll",e.target.value)} placeholder="0" style={{width:"100%",textAlign:"right"}}/></td>
+                  <td style={{textAlign:"right"}}>{(km||tripToll(t))?fmtMoney(km*RATE_KM+tripToll(t)):"-"}</td>
                   <td style={{textAlign:"center",whiteSpace:"nowrap"}}>
                     <label className="btn sm sec" style={{cursor:"pointer",fontSize:10,padding:"2px 5px",display:"inline-block",marginRight:3,borderColor:t.photoOut?"#B7DEC8":undefined,color:t.photoOut?"#2E7D5B":undefined}} title={t.photoOut?("ขาไป: "+t.photoOut.name):"รูปเลขไมล์ ขาไป (ก่อนออก)"}>
                       {t.photoOut?"✓ไป":"📎ไป"}<input type="file" accept="image/*" style={{display:"none"}} onChange={e=>setTrip(i,"photoOut",e.target.files?.[0]||null)}/></label>
@@ -523,18 +527,18 @@ export default function NewRequest(){
                   </td>
                   <td style={{textAlign:"center"}}>{trips.length>1&&<button type="button" onClick={()=>rmTrip(i)} style={{border:"none",background:"none",color:"#B03A2E",cursor:"pointer",fontSize:16,lineHeight:1}}>×</button>}</td>
                 </tr>
-                {over&&<tr><td></td><td colSpan="10" style={{paddingBottom:6}}>
+                {over&&<tr><td></td><td colSpan="11" style={{paddingBottom:6}}>
                   <input value={t.reason} onChange={e=>setTrip(i,"reason",e.target.value)} placeholder="⚠ ระยะเกิน Maps — ระบุเหตุผล/จุดแวะ (บังคับ)"
                     style={{width:"100%",borderColor:"#B03A2E",fontSize:11}}/></td></tr>}
               </Fragment>); })}
               </tbody>
               <tfoot><tr style={{borderTop:"2px solid #DDE6E0",fontWeight:700,background:"#FAFDFB"}}>
                 <td colSpan="5"><button type="button" onClick={addTrip} className="btn sm sec" style={{fontSize:12}} disabled={trips.length>=8}>+ เพิ่มเที่ยว</button></td>
-                <td style={{textAlign:"right"}}>{travelKm||"-"}</td><td></td><td></td><td className="right" style={{color:"#2E7D5B"}}>{fmtMoney(travelTotal)}</td><td colSpan="2"></td>
+                <td style={{textAlign:"right"}}>{travelKm||"-"}</td><td></td><td></td><td className="right">{travelTolls?fmtMoney(travelTolls):"-"}</td><td className="right" style={{color:"#2E7D5B"}}>{fmtMoney(travelTotal)}</td><td colSpan="2"></td>
               </tr></tfoot></table>
               </div>
               {trips.some(tripOver)&&<div style={{fontSize:11.5,color:"#B03A2E",fontWeight:700,marginTop:5}}>⚠ มีเที่ยวที่ระยะสูงกว่า Google Maps เกิน {MAPS_TOL} กม. — ต้องระบุเหตุผล/จุดแวะในแถวสีแดง</div>}
-              <div className="muted" style={{fontSize:11,marginTop:4}}>ระยะ = ไมล์กลับ − ไมล์ไป · เงิน = ระยะ × {RATE_KM} บาท · <b>ต้องแนบรูปเลขไมล์ 2 รูปทุกเที่ยว: ขาไป (ก่อนออก) + ขากลับ (เมื่อถึง)</b></div>
+              <div className="muted" style={{fontSize:11,marginTop:4}}>ระยะ = ไมล์กลับ − ไมล์ไป · เงิน = (ระยะ × {RATE_KM} บาท) + ค่าทางด่วน · <b>ต้องแนบรูปเลขไมล์ 2 รูปทุกเที่ยว: ขาไป (ก่อนออก) + ขากลับ (เมื่อถึง)</b> · ค่าทางด่วนแนบใบเสร็จได้ที่ "แนบไฟล์" ด้านล่าง</div>
             </div>
           </>
           ) : useLines ? (
